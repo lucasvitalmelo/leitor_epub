@@ -6,7 +6,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { v4 as uuid } from "uuid";
 import { Download, EllipsisVertical, Lock, Pencil, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -28,6 +28,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import CoverImage from "@/components/CoverImage";
+import DriveButton from "@/components/library/DriveButton";
 import EditBookDialog from "@/components/library/EditBookDialog";
 import { listBooks, addBook, removeBook } from "@/lib/db/books";
 import { listProgress } from "@/lib/db/progress";
@@ -36,6 +37,7 @@ import { parseEpubMetadata } from "@/lib/epub/parse";
 import type { Book, Progress, Theme } from "@/lib/db/schema";
 import { themeTint } from "@/lib/theme-colors";
 import { cn } from "@/lib/utils";
+import { useDriveStore } from "@/store/drive-store";
 import { useThemeStore } from "@/store/theme-store";
 import ProgressBar from "@/components/ProgressBar";
 import { Toaster } from "@/components/ui/sonner";
@@ -123,6 +125,20 @@ function ReadingCard({
   );
 }
 
+// Same id for every result: a repeated announcement replaces the toast
+// instead of stacking a second one.
+function showDriveResult(result: string) {
+  const options = { id: "drive-result" };
+  if (result === "conectado") toast.success("Google Drive conectado", options);
+  else if (result === "cancelado") toast("Conexão com o Google Drive cancelada", options);
+  else if (result === "sem-permissao")
+    toast.error("O Google Drive não foi liberado", {
+      ...options,
+      description: "Ao conectar, deixe marcada a permissão do Google Drive.",
+    });
+  else toast.error("Não foi possível conectar ao Google Drive", options);
+}
+
 export default function Library() {
   const [books, setBooks] = useState<Book[]>([]);
   const [progress, setProgress] = useState<Progress[]>([]);
@@ -133,6 +149,8 @@ export default function Library() {
   const [editOpen, setEditOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const driveResult = searchParams.get("drive");
   const activeTheme = useThemeStore((s) => s.activeTheme);
 
   // Same reasoning as Reader.tsx: text-foreground/text-muted-foreground/
@@ -174,6 +192,25 @@ export default function Library() {
     listBooks().then(setBooks);
     listProgress().then(setProgress);
   }, []);
+
+  useEffect(() => {
+    void useDriveStore.getState().check();
+  }, []);
+
+  // Google's login comes back here as ?drive=<result> (server/auth/routes.ts).
+  // Announced from this effect, which runs after the Toaster below has
+  // mounted, and then taken off the address.
+  useEffect(() => {
+    if (!driveResult) return;
+    showDriveResult(driveResult);
+    setSearchParams(
+      (params) => {
+        params.delete("drive");
+        return params;
+      },
+      { replace: true },
+    );
+  }, [driveResult, setSearchParams]);
 
   const progressByBook = useMemo(
     () => new Map(progress.map((p) => [p.bookId, p])),
@@ -309,6 +346,7 @@ export default function Library() {
               </span>
             )}
           </h1>
+          <DriveButton portalStyle={portalVars} />
           <Button
             onClick={pickFiles}
             disabled={importing}

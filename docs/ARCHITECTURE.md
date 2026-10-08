@@ -2,7 +2,7 @@
 
 ## Visão geral
 
-Aplicação client-side (SPA), sem backend. Todo o estado persistente (arquivos EPUB, progresso de leitura, temas) fica em IndexedDB, no navegador de quem estiver usando. O deploy é de um app estático (ex: Vercel/Netlify) — múltiplas pessoas podem acessar a mesma URL, cada uma com sua própria biblioteca local, sem que os dados se misturem ou precisem de login.
+Aplicação client-side (SPA), sem backend de dados — a única peça de servidor é o login do Google Drive (`server/`, ver Decisões técnicas). Todo o estado persistente (arquivos EPUB, progresso de leitura, temas) fica em IndexedDB, no navegador de quem estiver usando. O deploy é de um app estático (ex: Vercel/Netlify) — múltiplas pessoas podem acessar a mesma URL, cada uma com sua própria biblioteca local, sem que os dados se misturem ou precisem de login.
 
 ## Modelo de dados (IndexedDB via Dexie.js)
 
@@ -46,6 +46,7 @@ Aplicação client-side (SPA), sem backend. Todo o estado persistente (arquivos 
 ## Estrutura de pastas (planejada)
 
 ```
+server/             # login do Google Drive: rotas /api/auth/* e os arquivos do app (Node 24)
 src/
   components/       # componentes de UI reutilizáveis (shadcn + custom)
   pages/            # Library, Reader, Settings
@@ -58,7 +59,7 @@ src/
 
 ## Decisões técnicas
 
-- **Sem backend/auth**: como cada usuário só acessa seus próprios dados locais, não há necessidade de contas ou API — reduz drasticamente a complexidade e o custo de manter o projeto.
+- **Sem backend de dados; um servidor só para o login do Google Drive**: livros, progresso e grifos ficam no navegador (e, com a sincronização, no Drive da própria pessoa), sem contas nem API nossa — reduz drasticamente a complexidade e o custo de manter o projeto. O servidor de `server/` só troca o código do login do Google por um refresh token, guardado num cookie cifrado, e renova o access token; não tem banco, e nenhum livro passa por ele. Roda em Docker no Coolify durante o desenvolvimento; a produção na Vercel segue estática, sem ele.
 - **Dexie.js em vez de IndexedDB puro**: API mais ergonômica, com suporte a queries e migrations de schema.
 - **epub.js**: biblioteca madura para parsing/renderização de EPUB, expõe CFI (posição exata dentro do texto) o que resolve "salvar posição de leitura" com precisão.
 - **shadcn/ui**: componentes acessíveis e sem estilo opinativo forte, facilita aplicar a identidade visual customizada (tema "menininha": paletas pastel, cantos arredondados, tipografia suave).
