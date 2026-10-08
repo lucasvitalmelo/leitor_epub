@@ -125,6 +125,57 @@ function ReadingCard({
   );
 }
 
+// The policy is a static page of its own, not a route of the app: a tab of its
+// own, so the installed app isn't left behind.
+function PrivacyLink({ children }: { children: ReactNode }) {
+  return (
+    <a
+      href="/privacy"
+      target="_blank"
+      rel="noopener noreferrer"
+      className="cursor-pointer underline underline-offset-2"
+    >
+      {children}
+    </a>
+  );
+}
+
+// What the app is and what it does with the Google account, for whoever opens
+// it for the first time (Google's review of the sign-in screen reads the home
+// page too). Only shown while the library is empty.
+function AboutSection() {
+  return (
+    <section
+      aria-labelledby="sobre"
+      className="mx-auto mt-10 max-w-xl space-y-3 text-center text-sm text-muted-foreground"
+    >
+      <h2 id="sobre" className="text-base font-medium text-foreground">
+        Sobre o MyBooks
+      </h2>
+      <p>
+        O MyBooks é um leitor de EPUB pessoal: importe seus livros, leia com as
+        cores, a fonte e o espaçamento que preferir, grife trechos e escreva
+        anotações. Seus livros, seu progresso e seus grifos ficam guardados no
+        seu navegador.
+      </p>
+      <p>
+        Se quiser, conecte sua conta Google: o MyBooks usa o Google Drive, só
+        com acesso aos arquivos que ele mesmo cria, para guardar seus livros,
+        progresso e grifos e levar a leitura de um aparelho para o outro.
+      </p>
+      <p lang="en">
+        MyBooks is a personal EPUB reader. Optionally, you can connect your
+        Google account: MyBooks then uses Google Drive, restricted to the files
+        it creates itself, to keep your books, reading progress and highlights
+        and carry your reading from one device to another.
+      </p>
+      <p>
+        <PrivacyLink>Política de privacidade · Privacy policy</PrivacyLink>
+      </p>
+    </section>
+  );
+}
+
 // Same id for every result: a repeated announcement replaces the toast
 // instead of stacking a second one.
 function showDriveResult(result: string) {
@@ -339,7 +390,7 @@ export default function Library() {
             className="size-8 shrink-0 rounded-lg"
           />
           <h1 className="flex items-center gap-1 min-w-0 flex-1 truncate text-xl font-semibold sm:text-2xl">
-            Biblioteca
+            MyBooks
             {books.length > 0 && (
               <span className="text-sm font-normal text-muted-foreground sm:text-base">
                 · {books.length} {books.length === 1 ? "livro" : "livros"}
@@ -525,6 +576,7 @@ export default function Library() {
             </div>
           </section>
         )}
+        {books.length === 0 && <AboutSection />}
       </div>
 
       <AlertDialog
@@ -568,8 +620,11 @@ export default function Library() {
       <footer className="border-t px-6 py-4 text-center text-xs text-muted-foreground">
         <p className="flex items-center justify-center gap-1.5">
           <Lock className="size-3.5 shrink-0" />
-          Seus livros e seu progresso de leitura ficam guardados só aqui, no seu
-          navegador — nada sai da sua máquina.
+          Seus livros e seu progresso de leitura ficam guardados no seu
+          navegador; o Google Drive é opcional.
+        </p>
+        <p className="mt-1">
+          MyBooks · <PrivacyLink>Política de privacidade</PrivacyLink>
         </p>
       </footer>
       <Toaster />

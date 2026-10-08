@@ -22,7 +22,8 @@ export default defineConfig({
         navigateFallback: '/index.html',
         // The login goes through /api/auth/* as page navigations; answering
         // them with the cached app would keep them from reaching the server.
-        navigateFallbackDenylist: [/^\/api\//],
+        // /privacy is a static page of its own, not a route of the app.
+        navigateFallbackDenylist: [/^\/api\//, /^\/privacy/],
       },
     }),
   ],
