@@ -16,7 +16,8 @@ import { toast } from 'sonner'
 import { v4 as uuid } from 'uuid'
 import { Button } from '@/components/ui/button'
 import { Toaster } from '@/components/ui/sonner'
-import { getBook } from '@/lib/db/books'
+import { getBook, updateBook } from '@/lib/db/books'
+import { LOCATION_CHARS } from '@/lib/epub/prepare'
 import { addHighlight, listHighlights, removeHighlight, setHighlightNote } from '@/lib/db/highlights'
 import { getProgress, saveProgress } from '@/lib/db/progress'
 import {
@@ -201,7 +202,7 @@ function computeActiveTocId(
 // a reflow after display can shift which CFI is "currently displayed",
 // which then gets saved over the position the person actually left off at)
 // and again whenever the theme changes while already reading.
-function applyTheme(rendition: Rendition, theme: Theme) {
+function applyTheme(rendition: Rendition, theme: Theme, fontScale: number) {
   rendition.themes.default({
     body: {
       background: `${theme.background} !important`,
@@ -216,7 +217,7 @@ function applyTheme(rendition: Rendition, theme: Theme) {
       'line-height': `${theme.lineHeight} !important`,
     },
   })
-  rendition.themes.fontSize(`${theme.fontSize}px`)
+  rendition.themes.fontSize(`${theme.fontSize * fontScale}px`)
 
   const { spread, minWidth } = SPREAD_BY_COLUMNS[theme.columns]
   rendition.spread(spread, minWidth)
@@ -827,6 +828,8 @@ export default function Reader() {
   // live-update effect below can tell "loading just flipped to false" apart
   // from "the theme actually changed" — see that effect's comment.
   const appliedThemeRef = useRef<{ rendition: Rendition; theme: Theme } | null>(null)
+  // The open book's own correction (Book.fontScale); 1 until open() reads it.
+  const fontScaleRef = useRef(1)
 
   useEffect(() => {
     if (!bookId || !viewerRef.current) return
@@ -837,6 +840,7 @@ export default function Reader() {
       const record = await getBook(bookId!)
       if (!record || cancelled) return
       setBookTitle(record.title)
+      fontScaleRef.current = record.fontScale ?? 1
 
       const arrayBuffer = await record.fileBlob.arrayBuffer()
       // From here to renditionRef being set is synchronous. Without this
@@ -849,22 +853,33 @@ export default function Reader() {
       bookRef.current = book
       setOpenBook(book)
 
-      // book.locations.generate() walks the spine loading and unloading each
-      // Section to measure it — but Section load/unload isn't safe to run
-      // concurrently with the rendition reading from those same Section
-      // objects to display the current page. Running both against the same
-      // Book crashed inside epub.js (Locations' queue callback reading
-      // `._locations` on a Section state torn down mid-load). A second,
-      // independent Book parsed from the same bytes has its own Sections, so
-      // the two can run at the same time safely — this is also what avoids
-      // blocking the first page on a multi-second scan of the whole book.
-      const locationsBook = ePub(arrayBuffer.slice(0))
-      let locationsGenerated = false
-      const locationsReady = (async () => {
-        await locationsBook.ready
-        await locationsBook.locations.generate(1024)
-        locationsGenerated = true
-      })()
+      // Saved on import (prepareEpub): loading them is instant and touches no
+      // Section, so the rendering Book can hold them. Books imported before
+      // that generate them here once and keep them for next time.
+      let locations: EpubBook['locations'] | undefined
+      const savedLocations = record.locations
+      const locationsReady = savedLocations
+        ? book.ready.then(() => {
+            book.locations.load(savedLocations)
+            locations = book.locations
+          })
+        : (async () => {
+            // book.locations.generate() walks the spine loading and unloading
+            // each Section to measure it — but Section load/unload isn't safe
+            // to run concurrently with the rendition reading from those same
+            // Section objects to display the current page. Running both
+            // against the same Book crashed inside epub.js (Locations' queue
+            // callback reading `._locations` on a Section state torn down
+            // mid-load). A second, independent Book parsed from the same bytes
+            // has its own Sections, so the two can run at the same time safely
+            // — this is also what avoids blocking the first page on a
+            // multi-second scan of the whole book.
+            const locationsBook = ePub(arrayBuffer.slice(0))
+            await locationsBook.ready
+            await locationsBook.locations.generate(LOCATION_CHARS)
+            locations = locationsBook.locations
+            await updateBook(bookId!, { locations: locationsBook.locations.save() })
+          })()
 
       const rendition = book.renderTo(viewerRef.current!, {
         width: '100%',
@@ -935,7 +950,7 @@ export default function Reader() {
         })
       })
 
-      applyTheme(rendition, activeTheme)
+      applyTheme(rendition, activeTheme, fontScaleRef.current)
       appliedThemeRef.current = { rendition, theme: activeTheme }
 
       const savedHighlights = await listHighlights(bookId!)
@@ -968,13 +983,12 @@ export default function Reader() {
         resolveFirstRelocation = resolve
       })
 
-      // Not length() > 1: locations fill in during generate(), but `total` is
-      // only set at the end, so every percentage is 0 until then. Callers get
-      // undefined and keep the last known value.
+      // `locations` is set only once ready — not length() > 1: locations fill
+      // in during generate(), but `total` is only set at the end, so every
+      // percentage is 0 until then. Callers get undefined and keep the last
+      // known value.
       const percentageForCfi = (cfi: string): number | undefined =>
-        locationsGenerated
-          ? Math.round(locationsBook.locations.percentageFromCfi(cfi) * 100)
-          : undefined
+        locations ? Math.round(locations.percentageFromCfi(cfi) * 100) : undefined
 
       // Retried once, only while still the newest write — a late retry would
       // put an older position back on top of a newer one.
@@ -1057,7 +1071,7 @@ export default function Reader() {
         canPageRef.current = true
       }
 
-      // If locationsBook finishes generating after the initial display, the
+      // If the locations are ready only after the initial display, the
       // relocated event above had nothing to compute percentage from yet.
       // Recompute it now for the screen and for the saved position (its CFI
       // untouched) — reading positions directly, not re-calling
@@ -1095,8 +1109,9 @@ export default function Reader() {
       canPageRef.current = false
       renditionRef.current?.destroy()
       bookRef.current?.destroy()
-      // locationsBook is deliberately not destroyed here: destroying it
-      // while its own generate() is still mid-flight is the same crash this
+      // The locations Book (books imported before prepareEpub) is
+      // deliberately not destroyed here: destroying it while its own
+      // generate() is still mid-flight is the same crash this
       // whole separate-Book approach exists to avoid. It's unused after
       // `cancelled` flips, so it just finishes generating in the background
       // and gets garbage-collected once nothing references it anymore.
@@ -1332,7 +1347,7 @@ export default function Reader() {
     const applied = appliedThemeRef.current
     if (applied && applied.rendition === rendition && applied.theme === activeTheme) return
     appliedThemeRef.current = { rendition, theme: activeTheme }
-    applyTheme(rendition, activeTheme)
+    applyTheme(rendition, activeTheme, fontScaleRef.current)
     resettleRef.current()
   }, [activeTheme, loading])
 

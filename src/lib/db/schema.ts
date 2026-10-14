@@ -7,6 +7,12 @@ export interface Book {
   coverBlob: Blob | null
   fileBlob: Blob
   addedAt: number
+  // Multiplies the theme's font size so the book's main text lands on it;
+  // measured on import (see prepareEpub). Absent on books imported before.
+  fontScale?: number
+  // book.locations.save() for the stored file. Not indexed, so adding these
+  // needed no new database version.
+  locations?: string
 }
 
 export interface Progress {

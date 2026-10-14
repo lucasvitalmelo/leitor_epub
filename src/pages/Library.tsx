@@ -34,6 +34,7 @@ import { listBooks, addBook, removeBook } from "@/lib/db/books";
 import { listProgress } from "@/lib/db/progress";
 import { exportBook } from "@/lib/epub/export";
 import { parseEpubMetadata } from "@/lib/epub/parse";
+import { prepareEpub } from "@/lib/epub/prepare";
 import type { Book, Progress, Theme } from "@/lib/db/schema";
 import { themeTint } from "@/lib/theme-colors";
 import { cn } from "@/lib/utils";
@@ -317,12 +318,15 @@ export default function Library() {
       for (const file of Array.from(files)) {
         try {
           const metadata = await parseEpubMetadata(file);
+          const prepared = await prepareEpub(file);
           await addBook({
             id: uuid(),
             title: metadata.title,
             author: metadata.author,
             coverBlob: metadata.coverBlob,
-            fileBlob: file,
+            fileBlob: prepared.fileBlob,
+            fontScale: prepared.fontScale,
+            locations: prepared.locations,
             addedAt: Date.now(),
           });
         } catch (error) {
@@ -406,7 +410,7 @@ export default function Library() {
           >
             <Plus />
             <span className="max-sm:hidden">
-              {importing ? "Importando..." : "Adicionar EPUB"}
+              {importing ? "Preparando livro..." : "Adicionar EPUB"}
             </span>
           </Button>
           <input
@@ -466,7 +470,7 @@ export default function Library() {
               <Plus className="size-6" />
             </span>
             <span className="font-medium">
-              {importing ? "Importando..." : "Adicionar seu primeiro EPUB"}
+              {importing ? "Preparando livro..." : "Adicionar seu primeiro EPUB"}
             </span>
             <span className="text-sm text-muted-foreground">
               Escolha um ou mais arquivos .epub do seu aparelho.
@@ -571,7 +575,7 @@ export default function Library() {
                 className="flex aspect-2/3 w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed text-sm text-muted-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed"
               >
                 <Plus className="size-5" />
-                {importing ? "Importando..." : "Adicionar"}
+                {importing ? "Preparando livro..." : "Adicionar"}
               </button>
             </div>
           </section>
