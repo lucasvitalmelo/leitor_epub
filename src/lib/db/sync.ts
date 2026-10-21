@@ -52,12 +52,21 @@ export async function readLocalLibrary(): Promise<LocalLibrary> {
   })
 }
 
+// How many records a sync changed here, by kind: the books that arrived from
+// another device or were removed there are announced to the reader; the rest
+// (edits, progress, highlights) isn't.
+export interface AppliedChanges {
+  booksAdded: number
+  booksRemoved: number
+  other: number
+}
+
 // Writes what the merge took from the other side, in one transaction. Each
 // record is written only if it's still the one the merge saw; one that changed
 // meanwhile (the reader saved a position, a highlight was edited) is left for
-// the next sync to decide. Returns how many records changed here.
-export async function applyRemoteChanges(changes: LocalChanges): Promise<number> {
-  let applied = 0
+// the next sync to decide.
+export async function applyRemoteChanges(changes: LocalChanges): Promise<AppliedChanges> {
+  const applied: AppliedChanges = { booksAdded: 0, booksRemoved: 0, other: 0 }
   await db.transaction('rw', db.books, db.progress, db.highlights, db.deletions, async () => {
     for (const { id, book, expected } of changes.books) {
       const current = await db.books.get(id)
@@ -78,7 +87,7 @@ export async function applyRemoteChanges(changes: LocalChanges): Promise<number>
           driveCoverId: book.coverId ?? undefined,
           fontScale: book.fontScale,
         })
-        applied++
+        applied.booksAdded++
         continue
       }
       if (!current || (current.updatedAt ?? current.addedAt) !== expected) continue
@@ -102,7 +111,7 @@ export async function applyRemoteChanges(changes: LocalChanges): Promise<number>
         // A newer record can come with a new cover; it's downloaded again.
         ...(book.coverId && book.updatedAt > expected ? { coverBlob: null } : {}),
       })
-      applied++
+      applied.other++
     }
 
     for (const { id, expected } of changes.removedBooks) {
@@ -111,7 +120,7 @@ export async function applyRemoteChanges(changes: LocalChanges): Promise<number>
       await db.books.delete(id)
       await db.progress.delete(id)
       await db.highlights.where('bookId').equals(id).delete()
-      applied++
+      applied.booksRemoved++
     }
 
     for (const { bookId, progress, expected } of changes.progress) {
@@ -119,7 +128,7 @@ export async function applyRemoteChanges(changes: LocalChanges): Promise<number>
       const current = await db.progress.get(bookId)
       if ((current?.lastReadAt ?? null) !== expected) continue
       await db.progress.put({ bookId, cfi: progress.cfi, percentage: progress.percentage, lastReadAt: progress.lastReadAt })
-      applied++
+      applied.other++
     }
 
     for (const { id, highlight, expected } of changes.highlights) {
@@ -127,14 +136,14 @@ export async function applyRemoteChanges(changes: LocalChanges): Promise<number>
       const current = await db.highlights.get(id)
       if ((current ? (current.updatedAt ?? current.createdAt) : null) !== expected) continue
       await db.highlights.put({ id, ...highlight })
-      applied++
+      applied.other++
     }
 
     for (const { id, expected } of changes.removedHighlights) {
       const current = await db.highlights.get(id)
       if (!current || (current.updatedAt ?? current.createdAt) !== expected) continue
       await db.highlights.delete(id)
-      applied++
+      applied.other++
     }
 
     for (const deletion of changes.deletions) {

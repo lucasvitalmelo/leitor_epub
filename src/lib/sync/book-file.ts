@@ -15,6 +15,15 @@ export function needsDownload(book: Book): boolean {
   return book.fileBlob === null || (book.blobUpdatedAt ?? 0) < (book.fileUpdatedAt ?? 0)
 }
 
+// The book's file as it is on Drive now. Throws when it can't be fetched (no
+// connection, the Drive disconnected, the file gone); keeping it is up to the caller.
+export async function downloadBookBlob(book: Book, api: DriveApi = driveApi): Promise<Blob> {
+  if (!book.driveFileId) throw new BookNotHereError()
+  const file = new Blob([await api.downloadBlob(book.driveFileId)], { type: 'application/epub+zip' })
+  debugLog('livro: baixado', `${book.id.slice(0, 8)} ${file.size} bytes`)
+  return file
+}
+
 // The book's file, fetched from Drive when this device doesn't have it or has
 // an older version. Without a connection, an older version still opens: an
 // edit only changes the title, the author and the cover.
@@ -23,8 +32,7 @@ export async function ensureBookFile(book: Book, api: DriveApi = driveApi): Prom
   if (book.driveFileId) {
     let file: Blob | null = null
     try {
-      file = new Blob([await api.downloadBlob(book.driveFileId)], { type: 'application/epub+zip' })
-      debugLog('livro: baixado', `${book.id.slice(0, 8)} ${file.size} bytes`)
+      file = await downloadBookBlob(book, api)
     } catch (error) {
       debugLog('livro: não baixado', `${book.id.slice(0, 8)} ${String(error)}`)
     }

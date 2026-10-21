@@ -250,7 +250,7 @@ describe('sincronização entre dois aparelhos', () => {
     await pc.books.addBook({ id: await bookIdFor(mine), title: 'Do PC', author: 'Autor', coverBlob: null, fileBlob: mine, addedAt: 300 })
     drive.full = true
 
-    await expect(pc.sync.syncNow(drive)).rejects.toMatchObject({ problem: 'cheio' })
+    await expect(pc.sync.syncNow(drive)).rejects.toMatchObject({ problem: 'cheio', booksAdded: 1 })
     expect(await (await pc.books.getBook(id))?.coverBlob?.text()).toBe('capa')
   })
 
@@ -273,5 +273,66 @@ describe('sincronização entre dois aparelhos', () => {
 
     await expect(phone.sync.syncNow(drive)).rejects.toMatchObject({ problem: 'pasta' })
     expect(drive.files.size).toBe(folders)
+  })
+
+  it('avisa o andamento dos envios livro a livro, contando o recusado, e nada quando não há o que enviar', async () => {
+    const drive = new FakeDrive()
+    drive.refuseBigUploads = true
+    const phone = await device()
+    const big = await epub('x'.repeat(SIMPLE_UPLOAD_LIMIT + 1024))
+    const small = await epub('Capítulo doze')
+    await phone.books.addBook({ id: await bookIdFor(big), title: 'Grande', author: 'Autor', coverBlob: null, fileBlob: big, addedAt: 100 })
+    await phone.books.addBook({ id: await bookIdFor(small), title: 'Pequeno', author: 'Autor', coverBlob: null, fileBlob: small, addedAt: 100 })
+    const onProgress = vi.fn()
+
+    await phone.sync.syncNow(drive, undefined, onProgress)
+    expect(onProgress.mock.calls.map(([progress]) => progress)).toEqual([
+      { done: 0, total: 2 },
+      { done: 1, total: 2 },
+      { done: 2, total: 2 },
+    ])
+
+    // The PC gets the book without its file: nothing of its own to send.
+    const pc = await device()
+    const quiet = vi.fn()
+    await pc.sync.syncNow(drive, undefined, quiet)
+    expect(quiet).not.toHaveBeenCalled()
+  })
+
+  it('o resumo separa os livros que chegaram e os que foram removidos no outro aparelho', async () => {
+    const drive = new FakeDrive()
+    const phone = await device()
+    const file = await epub('Capítulo treze')
+    const id = await bookIdFor(file)
+    await phone.books.addBook({ id, title: 'A Mão e a Luva', author: 'Machado', coverBlob: null, fileBlob: file, addedAt: 100 })
+    await phone.progress.saveProgress({ bookId: id, cfi: 'epubcfi(/6/4)', percentage: 5, lastReadAt: 150 })
+    await phone.sync.syncNow(drive)
+
+    const pc = await device()
+    expect(await pc.sync.syncNow(drive)).toMatchObject({ applied: 2, booksAdded: 1, booksRemoved: 0 })
+
+    await phone.books.removeBook(id)
+    await phone.sync.syncNow(drive)
+    expect(await pc.sync.syncNow(drive)).toMatchObject({ booksAdded: 0, booksRemoved: 1 })
+  })
+
+  it('os livros que chegaram contam mesmo se gravar a biblioteca no Drive falhar', async () => {
+    const drive = new FakeDrive()
+    const phone = await device()
+    const first = await epub('Capítulo catorze')
+    const firstId = await bookIdFor(first)
+    await phone.books.addBook({ id: firstId, title: 'Contos', author: 'Machado', coverBlob: null, fileBlob: first, addedAt: 100 })
+    await phone.sync.syncNow(drive)
+    const pc = await device()
+    await pc.sync.syncNow(drive)
+
+    const second = await epub('Capítulo quinze')
+    await phone.books.addBook({ id: await bookIdFor(second), title: 'Crônicas', author: 'Machado', coverBlob: null, fileBlob: second, addedAt: 200 })
+    await phone.sync.syncNow(drive)
+
+    // The PC read on, so its merged file differs from Drive's, and writing it back fails.
+    await pc.progress.saveProgress({ bookId: firstId, cfi: 'epubcfi(/6/4)', percentage: 30, lastReadAt: 900 })
+    drive.full = true
+    await expect(pc.sync.syncNow(drive)).rejects.toMatchObject({ problem: 'cheio', booksAdded: 1 })
   })
 })

@@ -42,7 +42,7 @@ describe('readLocalLibrary', () => {
 describe('applyRemoteChanges', () => {
   it('um livro novo de outro aparelho entra sem arquivo, com as referências do Drive', async () => {
     const applied = await applyRemoteChanges(changes({ books: [{ id: 'a', book: remoteBook({ fontScale: 1.2 }), expected: null }] }))
-    expect(applied).toBe(1)
+    expect(applied).toEqual({ booksAdded: 1, booksRemoved: 0, other: 0 })
     expect(await db.books.get('a')).toMatchObject({
       title: 'De lá',
       fileBlob: null,
@@ -58,7 +58,7 @@ describe('applyRemoteChanges', () => {
   it('não mexe num livro que mudou depois de a junção o ler', async () => {
     await db.books.add(makeBook('a', { title: 'Editado agora', updatedAt: 250 }))
     const applied = await applyRemoteChanges(changes({ books: [{ id: 'a', book: remoteBook(), expected: 200 }] }))
-    expect(applied).toBe(0)
+    expect(applied).toEqual({ booksAdded: 0, booksRemoved: 0, other: 0 })
     expect((await db.books.get('a'))?.title).toBe('Editado agora')
   })
 
@@ -81,7 +81,10 @@ describe('applyRemoteChanges', () => {
     await db.books.add(makeBook('a', { updatedAt: 200 }))
     await db.progress.add({ bookId: 'a', cfi: null, percentage: 10, lastReadAt: 1 })
     await db.highlights.add({ id: 'h1', bookId: 'a', cfiRange: 'c', text: 't', color: '#fac73c', createdAt: 1 })
-    await applyRemoteChanges(changes({ removedBooks: [{ id: 'a', expected: 200 }], deletions: [{ key: 'book:a', deletedAt: 300 }] }))
+    const applied = await applyRemoteChanges(
+      changes({ removedBooks: [{ id: 'a', expected: 200 }], deletions: [{ key: 'book:a', deletedAt: 300 }] }),
+    )
+    expect(applied).toEqual({ booksAdded: 0, booksRemoved: 1, other: 0 })
     expect(await db.books.count()).toBe(0)
     expect(await db.progress.count()).toBe(0)
     expect(await db.highlights.count()).toBe(0)
@@ -103,7 +106,7 @@ describe('applyRemoteChanges', () => {
         ],
       }),
     )
-    expect(applied).toBe(2)
+    expect(applied).toEqual({ booksAdded: 0, booksRemoved: 0, other: 2 })
     expect(await db.progress.get('a')).toMatchObject({ cfi: 'novo', lastReadAt: 9 })
     expect(await db.progress.get('sumido')).toBeUndefined()
     expect(await db.highlights.get('h1')).toMatchObject({ note: 'nota', updatedAt: 9 })

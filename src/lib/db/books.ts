@@ -47,3 +47,18 @@ export async function removeBook(id: string): Promise<void> {
     if (track) await db.deletions.put({ key: bookDeletionKey(id), deletedAt: Date.now() })
   })
 }
+
+// Frees the space the book's file takes here and keeps everything else: the
+// record, the cover, the progress and the highlights. Only for a book whose
+// file is safely on Drive (uploaded, nothing pending), so it can come back.
+// Written directly, not through updateBook, which would stamp an edit and mark
+// an upload with no file to send.
+export async function removeLocalFile(id: string): Promise<void> {
+  await db.transaction('rw', db.books, async () => {
+    const book = await db.books.get(id)
+    if (!book?.driveFileId || book.pendingUpload !== false) {
+      throw new Error('O livro não está no Google Drive: o arquivo deste aparelho é a única cópia')
+    }
+    await db.books.update(id, { fileBlob: null, blobUpdatedAt: undefined })
+  })
+}

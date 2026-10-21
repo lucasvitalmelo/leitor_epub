@@ -7,7 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Cloud, Download, EllipsisVertical, Lock, Pencil, Plus, Trash2 } from "lucide-react";
+import { Lock, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -19,28 +19,21 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import CoverImage from "@/components/CoverImage";
+import BookCard from "@/components/library/BookCard";
+import BookCover from "@/components/library/BookCover";
 import DriveButton from "@/components/library/DriveButton";
 import EditBookDialog from "@/components/library/EditBookDialog";
-import { listBooks, getBook, addBook, removeBook } from "@/lib/db/books";
+import PendingBookCard from "@/components/library/PendingBookCard";
+import SyncButton from "@/components/library/SyncButton";
+import SyncStrip from "@/components/library/SyncStrip";
+import { listBooks, removeBook, removeLocalFile } from "@/lib/db/books";
 import { listProgress } from "@/lib/db/progress";
-import { bookIdFor } from "@/lib/epub/book-id";
-import { exportBook } from "@/lib/epub/export";
-import { parseEpubMetadata } from "@/lib/epub/parse";
-import { prepareEpub } from "@/lib/epub/prepare";
 import { hasFile, type Book, type BookWithFile, type Progress, type Theme } from "@/lib/db/schema";
-import { requestPersistentStorage } from "@/lib/storage";
-import { needsDownload } from "@/lib/sync/book-file";
 import { themeTint } from "@/lib/theme-colors";
 import { cn } from "@/lib/utils";
+import { useDownloadStore } from "@/store/download-store";
 import { useDriveStore } from "@/store/drive-store";
+import { useImportStore } from "@/store/import-store";
 import { useSyncStore } from "@/store/sync-store";
 import { useThemeStore } from "@/store/theme-store";
 import ProgressBar from "@/components/ProgressBar";
@@ -194,14 +187,28 @@ function showDriveResult(result: string) {
   else toast.error("Não foi possível conectar ao Google Drive", options);
 }
 
+// Which books the grid shows while some are only on Drive. Kept for the
+// session, so coming back from the reader (which navigates to "/") doesn't
+// reset it.
+type Shelf = "todos" | "aparelho";
+const SHELF_KEY = "mybooks:estante";
+
+function readShelf(): Shelf {
+  try {
+    return sessionStorage.getItem(SHELF_KEY) === "aparelho" ? "aparelho" : "todos";
+  } catch {
+    return "todos";
+  }
+}
+
 export default function Library() {
   const [books, setBooks] = useState<Book[]>([]);
   const [progress, setProgress] = useState<Progress[]>([]);
-  const [importing, setImporting] = useState(false);
   const [bookToRemove, setBookToRemove] = useState<Book | null>(null);
   // A new session per opening remounts the dialog (see EditBookDialog).
   const [editing, setEditing] = useState<{ book: BookWithFile; session: number } | null>(null);
   const [editOpen, setEditOpen] = useState(false);
+  const [shelf, setShelf] = useState<Shelf>(readShelf);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -243,12 +250,22 @@ export default function Library() {
     "--ring": themeTint(activeTheme, 65),
   } as CSSProperties;
 
-  // Read again whenever a sync brought something from another device.
+  // Read again whenever a sync brought something from another device, and
+  // whenever an import or a download finished (either may end while the
+  // reader is open).
   const syncRevision = useSyncStore((s) => s.revision);
+  const importItems = useImportStore((s) => s.items);
+  const importRevision = useImportStore((s) => s.revision);
+  const addFiles = useImportStore((s) => s.add);
+  const dismissImport = useImportStore((s) => s.dismiss);
+  const downloading = useDownloadStore((s) => s.downloading);
+  const downloadRevision = useDownloadStore((s) => s.revision);
+  const download = useDownloadStore((s) => s.download);
+  const driveConnected = useDriveStore((s) => s.status === "conectado");
   useEffect(() => {
     listBooks().then(setBooks);
     listProgress().then(setProgress);
-  }, [syncRevision]);
+  }, [syncRevision, importRevision, downloadRevision]);
 
   // Every visit to the library syncs: opening the app, and coming back from a
   // book, whose new position then goes up.
@@ -313,82 +330,23 @@ export default function Library() {
     return [main && withProgress(main), second && withProgress(second)];
   }, [sortedBooks, progressByBook]);
 
-  function pickFiles() {
-    fileInputRef.current?.click();
+  // The tabs only show while some book is only on Drive; without them, every
+  // book is here anyway.
+  const someInCloud = books.some((book) => !hasFile(book));
+  const visibleBooks: Book[] =
+    someInCloud && shelf === "aparelho" ? sortedBooks.filter(hasFile) : sortedBooks;
+
+  function chooseShelf(next: Shelf) {
+    setShelf(next);
+    try {
+      sessionStorage.setItem(SHELF_KEY, next);
+    } catch {
+      // Storage blocked (private mode): the tab just isn't remembered.
+    }
   }
 
-  async function handleFiles(input: HTMLInputElement) {
-    const files = input.files;
-    if (!files || files.length === 0) return;
-    setImporting(true);
-    const failed: string[] = [];
-    const repeated: string[] = [];
-    let imported = 0;
-
-    try {
-      // One file that isn't a valid EPUB doesn't stop the others.
-      for (const file of Array.from(files)) {
-        try {
-          // The id comes from the file as picked, before prepareEpub rewrites
-          // its stylesheets, and is checked before any of the slow work: the
-          // same book picked again (here or on another device) is recognized
-          // instead of being added twice.
-          const id = await bookIdFor(file);
-          const existing = await getBook(id);
-          if (existing) {
-            repeated.push(existing.title);
-            continue;
-          }
-          const metadata = await parseEpubMetadata(file);
-          const prepared = await prepareEpub(file);
-          await addBook({
-            id,
-            title: metadata.title,
-            author: metadata.author,
-            coverBlob: metadata.coverBlob,
-            fileBlob: prepared.fileBlob,
-            fontScale: prepared.fontScale,
-            locations: prepared.locations,
-            addedAt: Date.now(),
-          });
-          imported++;
-        } catch (error) {
-          console.error(`Não foi possível importar ${file.name}`, error);
-          failed.push(file.name);
-        }
-      }
-    } finally {
-      // Cleared so picking the same file again (say, re-adding a book just
-      // removed) still fires `change` — the browser skips it for an unchanged value.
-      input.value = "";
-      setImporting(false);
-      if (imported > 0) void requestPersistentStorage();
-      if (repeated.length > 0) {
-        toast(
-          repeated.length === 1
-            ? `"${repeated[0]}" já está na biblioteca`
-            : `${repeated.length} livros já estavam na biblioteca`,
-        );
-      }
-      if (failed.length > 0) {
-        toast.error(
-          failed.length === 1
-            ? "Não foi possível importar 1 arquivo"
-            : `Não foi possível importar ${failed.length} arquivos`,
-          {
-            description: `${failed.join(", ")} — ${
-              failed.length === 1
-                ? "não parece ser um EPUB válido."
-                : "não parecem ser EPUBs válidos."
-            }`,
-            // Long enough to read the file names.
-            duration: 8000,
-          },
-        );
-      }
-      setBooks(await listBooks());
-      if (imported > 0) void useSyncStore.getState().run();
-    }
+  function pickFiles() {
+    fileInputRef.current?.click();
   }
 
   async function handleRemove(id: string) {
@@ -398,37 +356,24 @@ export default function Library() {
     void useSyncStore.getState().run();
   }
 
-  const openBook = (id: string) => navigate(`/read/${id}`);
+  // Only the file here goes; the book stays on Drive and comes back with ⤓.
+  async function handleRemoveLocal(book: Book) {
+    try {
+      await removeLocalFile(book.id);
+      setBooks(await listBooks());
+      toast(`"${book.title}" removido deste aparelho`);
+    } catch (error) {
+      console.error("Não foi possível remover o livro deste aparelho", error);
+      toast.error("Não foi possível remover deste aparelho");
+    }
+  }
 
-  const cover = (book: Book, className: string) => (
-    <div
-      className={cn("relative overflow-hidden rounded-lg border bg-muted", className)}
-    >
-      {book.coverBlob ? (
-        <CoverImage
-          blob={book.coverBlob}
-          className="h-full w-full object-cover transition-transform group-hover:scale-105"
-        />
-      ) : (
-        <div className="flex h-full items-center justify-center p-2 text-center text-sm text-muted-foreground">
-          {book.title}
-        </div>
-      )}
-      {!hasFile(book) && (
-        <span
-          title="Na nuvem: o livro é baixado quando você abre"
-          className="absolute top-1.5 right-1.5 rounded-full bg-background/85 p-1 text-foreground shadow-sm"
-        >
-          <Cloud className="size-3.5" aria-label="Na nuvem" />
-        </span>
-      )}
-    </div>
-  );
+  const openBook = (id: string) => navigate(`/read/${id}`);
 
   return (
     <div className="flex min-h-screen flex-col" style={themeVars}>
       <div className="mx-auto w-full max-w-5xl flex-1 px-4 py-6 sm:px-6 sm:py-10">
-        <header className="mb-6 flex items-center gap-3 sm:mb-8">
+        <header className="mb-6 flex items-center gap-2 sm:mb-8 sm:gap-3">
           <img
             src="/favicon.svg"
             alt=""
@@ -437,22 +382,20 @@ export default function Library() {
           <h1 className="flex items-center gap-1 min-w-0 flex-1 truncate text-xl font-semibold sm:text-2xl">
             MyBooks
             {books.length > 0 && (
-              <span className="text-sm font-normal text-muted-foreground sm:text-base">
+              <span className="min-w-0 truncate text-sm font-normal text-muted-foreground sm:text-base">
                 · {books.length} {books.length === 1 ? "livro" : "livros"}
               </span>
             )}
           </h1>
+          <SyncButton />
           <DriveButton portalStyle={portalVars} />
           <Button
             onClick={pickFiles}
-            disabled={importing}
             aria-label="Adicionar EPUB"
             className="max-sm:size-11 max-sm:px-0"
           >
             <Plus />
-            <span className="max-sm:hidden">
-              {importing ? "Preparando livro..." : "Adicionar EPUB"}
-            </span>
+            <span className="max-sm:hidden">Adicionar EPUB</span>
           </Button>
           <input
             ref={fileInputRef}
@@ -460,9 +403,18 @@ export default function Library() {
             accept=".epub"
             multiple
             className="hidden"
-            onChange={(e) => handleFiles(e.target)}
+            onChange={(e) => {
+              const input = e.target;
+              if (input.files?.length) addFiles(Array.from(input.files));
+              // Cleared so picking the same file again (say, re-adding a book
+              // just removed) still fires `change` — the browser skips it for
+              // an unchanged value.
+              input.value = "";
+            }}
           />
         </header>
+
+        <SyncStrip theme={activeTheme} />
 
         {/* On desktop the main card shares its row with the next book in
             progress (3:2), which keeps its own, shorter height and sits on
@@ -480,7 +432,7 @@ export default function Library() {
               heading="Continuar lendo"
               book={lastRead.book}
               percentage={lastRead.percentage}
-              cover={cover(lastRead.book, "h-full w-full shadow-md")}
+              cover={<BookCover book={lastRead.book} className="h-full w-full shadow-md" />}
               theme={activeTheme}
               onOpen={() => openBook(lastRead.book.id)}
               className={alsoReading ? undefined : "sm:w-fit sm:max-w-2xl"}
@@ -491,7 +443,7 @@ export default function Library() {
                 heading="Também lendo"
                 book={alsoReading.book}
                 percentage={alsoReading.percentage}
-                cover={cover(alsoReading.book, "h-full w-full shadow-sm")}
+                cover={<BookCover book={alsoReading.book} className="h-full w-full shadow-sm" />}
                 theme={activeTheme}
                 onOpen={() => openBook(alsoReading.book.id)}
                 className="hidden sm:flex sm:self-end"
@@ -500,19 +452,16 @@ export default function Library() {
           </div>
         )}
 
-        {books.length === 0 ? (
+        {books.length === 0 && importItems.length === 0 ? (
           <button
             type="button"
             onClick={pickFiles}
-            disabled={importing}
-            className="mx-auto mt-12 flex w-full max-w-sm cursor-pointer flex-col items-center gap-3 rounded-2xl border border-dashed px-6 py-12 text-center transition-colors hover:bg-muted disabled:cursor-not-allowed"
+            className="mx-auto mt-12 flex w-full max-w-sm cursor-pointer flex-col items-center gap-3 rounded-2xl border border-dashed px-6 py-12 text-center transition-colors hover:bg-muted"
           >
             <span className="flex size-12 items-center justify-center rounded-full bg-muted">
               <Plus className="size-6" />
             </span>
-            <span className="font-medium">
-              {importing ? "Preparando livro..." : "Adicionar seu primeiro EPUB"}
-            </span>
+            <span className="font-medium">Adicionar seu primeiro EPUB</span>
             <span className="text-sm text-muted-foreground">
               Escolha um ou mais arquivos .epub do seu aparelho.
             </span>
@@ -521,117 +470,90 @@ export default function Library() {
           <section aria-labelledby="todos-os-livros">
             <h2
               id="todos-os-livros"
-              className="mb-3 text-xs font-medium text-muted-foreground"
+              className={cn(
+                "mb-3 text-xs font-medium text-muted-foreground",
+                someInCloud && "sr-only",
+              )}
             >
               Todos os livros
             </h2>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 sm:gap-x-6 md:grid-cols-4 lg:grid-cols-5">
-              {sortedBooks.map((book) => {
-                const percentage = progressByBook.get(book.id)?.percentage ?? 0;
-                return (
-                  <div
-                    key={book.id}
-                    className="group relative flex flex-col gap-2"
+            {/* "No aparelho" is what can be read without a connection. */}
+            {someInCloud && (
+              <div
+                role="group"
+                aria-label="Quais livros mostrar"
+                className="mb-4 flex w-full max-w-xs gap-1 rounded-lg bg-muted p-1 text-sm"
+              >
+                {(
+                  [
+                    ["todos", "Todos"],
+                    ["aparelho", "No aparelho"],
+                  ] as const
+                ).map(([value, text]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    aria-pressed={shelf === value}
+                    onClick={() => chooseShelf(value)}
+                    className={cn(
+                      "flex-1 cursor-pointer rounded-md px-3 py-1.5 transition-colors",
+                      shelf === value
+                        ? "font-medium shadow-sm"
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
+                    style={
+                      shelf === value ? { background: activeTheme.background } : undefined
+                    }
                   >
-                    {/* Stretched over the card, as in ReadingCard: a real
-                        button, so Enter and Space both open the book, and the
-                        ⋯ menu sits beside it instead of nested inside it. */}
-                    <button
-                      type="button"
-                      aria-label={`Abrir ${book.title}`}
-                      onClick={() => openBook(book.id)}
-                      className="absolute inset-0 z-10 cursor-pointer rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-                    />
-                    {cover(book, "aspect-2/3 w-full")}
-                    {/* Always rendered, invisible for unstarted books, so every
-                        card's title starts at the same height across a row. */}
-                    <ProgressBar
-                      theme={activeTheme}
-                      percentage={percentage}
-                      className={cn(
-                        "-mt-0.5 h-1 rounded-full",
-                        percentage === 0 && "invisible",
-                      )}
-                    />
-                    <div className="flex items-start gap-1">
-                      <div className="min-w-0 flex-1">
-                        <p className="line-clamp-2 text-sm font-medium">
-                          {book.title}
-                        </p>
-                        <p className="truncate text-xs text-muted-foreground">
-                          {book.author}
-                        </p>
-                      </div>
-                      {/* modal={false}: a modal menu that closes while opening
-                          the dialog below can leave `pointer-events: none`
-                          stuck on the body in Radix. */}
-                      <DropdownMenu modal={false}>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            aria-label={`Opções de ${book.title}`}
-                            className="relative z-20 -mr-1.5 text-muted-foreground"
-                          >
-                            <EllipsisVertical />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" style={portalVars}>
-                          {/* Editing and exporting need the current file here:
-                              a book only on Drive, or one edited on another
-                              device since, is downloaded by opening it once.
-                              Editing the old copy would put its old title back
-                              over the other device's edit. */}
-                          <DropdownMenuItem
-                            className="cursor-pointer"
-                            disabled={!hasFile(book) || needsDownload(book)}
-                            onSelect={() => {
-                              if (!hasFile(book) || needsDownload(book)) return;
-                              setEditing({ book, session: Date.now() });
-                              setEditOpen(true);
-                            }}
-                          >
-                            <Pencil />
-                            Editar
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            className="cursor-pointer"
-                            disabled={!hasFile(book) || needsDownload(book)}
-                            onSelect={() => {
-                              if (hasFile(book) && !needsDownload(book)) void exportBook(book);
-                            }}
-                          >
-                            <Download />
-                            Exportar
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            variant="destructive"
-                            className="cursor-pointer"
-                            onSelect={() => setBookToRemove(book)}
-                          >
-                            <Trash2 />
-                            Remover
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                  </div>
-                );
-              })}
+                    {text}
+                  </button>
+                ))}
+              </div>
+            )}
+            {visibleBooks.length === 0 && importItems.length === 0 && (
+              <p className="mb-4 text-sm text-muted-foreground">
+                Nenhum livro baixado neste aparelho.
+              </p>
+            )}
+            <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 sm:gap-x-6 md:grid-cols-4 lg:grid-cols-5">
+              {importItems.map((item) => (
+                <PendingBookCard
+                  key={item.key}
+                  item={item}
+                  onDismiss={() => dismissImport(item.key)}
+                />
+              ))}
+              {visibleBooks.map((book) => (
+                <BookCard
+                  key={book.id}
+                  book={book}
+                  percentage={progressByBook.get(book.id)?.percentage ?? 0}
+                  theme={activeTheme}
+                  portalStyle={portalVars}
+                  downloading={downloading.includes(book.id)}
+                  driveConnected={driveConnected}
+                  onOpen={() => openBook(book.id)}
+                  onEdit={(file) => {
+                    setEditing({ book: file, session: Date.now() });
+                    setEditOpen(true);
+                  }}
+                  onRemove={setBookToRemove}
+                  onDownload={() => void download(book)}
+                  onRemoveLocal={() => void handleRemoveLocal(book)}
+                />
+              ))}
               <button
                 type="button"
                 onClick={pickFiles}
-                disabled={importing}
-                className="flex aspect-2/3 w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed text-sm text-muted-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed"
+                className="flex aspect-2/3 w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed text-sm text-muted-foreground transition-colors hover:bg-muted"
               >
                 <Plus className="size-5" />
-                {importing ? "Preparando livro..." : "Adicionar"}
+                Adicionar
               </button>
             </div>
           </section>
         )}
-        {books.length === 0 && <AboutSection />}
+        {books.length === 0 && importItems.length === 0 && <AboutSection />}
       </div>
 
       <AlertDialog

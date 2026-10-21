@@ -351,3 +351,32 @@ Registro de alterações relevantes do projeto: o que mudou e por quê. Ver regr
   - _Mudança na etapa 2a_: o registro de exclusões (`settings.driveEnabled`) agora só desliga ao desconectar. O `desconectado` do servidor só quer dizer "sem cookie agora" — e ele apaga o cookie depois de um `reconectar` —, e o que fosse removido nesse intervalo voltaria na junção. Um `check()` que responde depois do desconectar é ignorado.
   - _Fora desta etapa, de propósito_: os gatilhos automáticos (voltar para o app, 30 s sem mudança, a rede de volta), o estado no ícone e o andamento dos envios, remover "só deste aparelho", desconectar com limpeza, mandar para a lixeira do Drive os arquivos dos livros removidos (eles ficam na pasta até lá), renomear o `.epub` no Drive quando o livro é editado, e editar ou exportar um livro que está só na nuvem ou com o arquivo daqui atrás de uma edição feita em outro aparelho (desativados até ele ser aberto uma vez; editar a cópia velha poria o título antigo de volta por cima da edição de lá).
   - _Verificação_: 188 testes (57 novos), entre eles dois aparelhos sincronizando pelo mesmo Drive simulado: o livro do celular aparece no PC, abre lá e o progresso volta; grifos, notas e exclusões vão e voltam; uma edição sobe e o outro aparelho baixa o arquivo novo; o mesmo livro nos dois aparelhos fica um só no Drive; o que foi removido antes da primeira sincronização de um aparelho não apaga nada nos outros; dois aparelhos na primeira sincronização ao mesmo tempo ficam na mesma pasta; um livro recusado (inclusive um envio grande sem a sessão) não trava os outros; com o Drive cheio, o que vem dos outros aparelhos continua chegando; uma pasta apagada vira um erro claro. Pendente: o primeiro contato com o Drive de verdade, no celular e no PC.
+- **Retorno visível do sync, dos livros na nuvem e da importação** (`src/store/import-store.ts`, `src/store/download-store.ts`, `src/store/sync-store.ts`, `src/store/sync-strip.ts`, `src/components/library/`, `src/lib/sync/run.ts`, `src/lib/db/sync.ts`, `src/lib/db/books.ts`, `src/lib/sync/book-file.ts`, `src/pages/Library.tsx`):
+  - **Sync:**
+    - Ícone de sync próprio no cabeçalho, que gira enquanto sincroniza e mostra um ponto quando o último sync falhou.
+    - Faixa sob o cabeçalho, com o andamento dos envios ("Enviando livros · 2 de 5") ou com o erro e "Tentar de novo".
+    - Aviso quando livros chegam de outro aparelho ou são removidos nele.
+    - O diálogo do Google Drive ficou só com a conta.
+  - **Livros na nuvem:**
+    - O livro só na nuvem fica com a capa esmaecida e um botão de baixar sobre ela.
+    - As abas "Todos / No aparelho" filtram o que dá para ler sem internet.
+    - O menu ganhou "Remover deste aparelho". O "Remover" de antes virou "Excluir livro".
+  - **Importação:**
+    - O livro aparece na grade na hora, com a capa e o título assim que são lidos e um carregando por cima.
+    - O botão de adicionar não trava mais, e a importação continua com o leitor aberto.
+  - _Por quê_: o sync, o estado de cada livro e a importação aconteciam sem retorno visível. O andamento e os erros do sync só apareciam dentro do diálogo do Drive, o ☁ pequeno não deixava claro o que estava no aparelho, e a importação só mudava o texto do botão.
+  - _Decisão — o estado em andamento fica em stores Zustand_ (fila de importação, downloads, andamento do sync), não no componente da biblioteca, que desmonta quando o leitor abre. Descartado gravar o livro no banco antes de prepará-lo: o sync subiria o EPUB cru, e um reload no meio deixaria registros órfãos.
+  - _Decisão — sem internet não abre a faixa_: fica só o ponto no ícone. É justamente quando se usa a aba "No aparelho", e uma faixa vermelha a cada visita seria ruído.
+  - _Decisão — o aviso do que mudou é só para livros_: progresso e grifos de outro aparelho chegam a cada volta do leitor, e um aviso a cada vez seria ruído.
+  - _Decisão — o aviso sai mesmo quando o sync falha depois_: os livros que já chegaram (antes de um envio sem rede, ou de gravar a biblioteca no Drive cheio) estão na grade, e o sync seguinte não os veria mais como novos. As contagens vão sendo somadas enquanto a junção é aplicada e seguem no erro (`SyncError.booksAdded`/`booksRemoved`).
+  - _Decisão — o sync pedido pelo toque responde com um aviso_ ("Biblioteca sincronizada" ou o erro): o celular não mostra tooltip, e a linha de status saiu do diálogo do Drive.
+  - _Decisão — "Remover deste aparelho" só com o arquivo seguro no Drive_ (enviado, sem envio pendente) e com o Drive conectado; senão apagaria a única cópia, ou não daria para baixar de volta. Grava direto no banco, sem `updateBook`, que marcaria uma edição e um envio pendente sem arquivo.
+  - _Decisão — download sem porcentagem_: o `downloadBlob` lê a resposta inteira (`response.blob()`); um spinner basta para EPUBs de poucos MB.
+  - _Limite aceito_: recarregar ou fechar a aba no meio de uma importação perde a fila, porque os arquivos só existem na memória.
+  - _Verificação_: 210 testes (22 novos), lint e build passando. No navegador, com o `livro-de-teste.epub` e estados simulados:
+    - Os cards da importação (preparando, na fila e com falha).
+    - A capa esmaecida com ⤓, as abas e o aviso de falha no download.
+    - A faixa de envio e a de erro, com o ✕, e sem faixa quando está offline.
+    - O cabeçalho a 375 px.
+
+    Ficam para o celular, com o Drive de verdade: o envio real, o download pelo ⤓, "Remover deste aparelho" e os avisos.
