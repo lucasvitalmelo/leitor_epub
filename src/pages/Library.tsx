@@ -7,7 +7,6 @@ import {
   type ReactNode,
 } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { v4 as uuid } from "uuid";
 import { Download, EllipsisVertical, Lock, Pencil, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -30,12 +29,14 @@ import {
 import CoverImage from "@/components/CoverImage";
 import DriveButton from "@/components/library/DriveButton";
 import EditBookDialog from "@/components/library/EditBookDialog";
-import { listBooks, addBook, removeBook } from "@/lib/db/books";
+import { listBooks, getBook, addBook, removeBook } from "@/lib/db/books";
 import { listProgress } from "@/lib/db/progress";
+import { bookIdFor } from "@/lib/epub/book-id";
 import { exportBook } from "@/lib/epub/export";
 import { parseEpubMetadata } from "@/lib/epub/parse";
 import { prepareEpub } from "@/lib/epub/prepare";
 import type { Book, Progress, Theme } from "@/lib/db/schema";
+import { requestPersistentStorage } from "@/lib/storage";
 import { themeTint } from "@/lib/theme-colors";
 import { cn } from "@/lib/utils";
 import { useDriveStore } from "@/store/drive-store";
@@ -312,15 +313,27 @@ export default function Library() {
     if (!files || files.length === 0) return;
     setImporting(true);
     const failed: string[] = [];
+    const repeated: string[] = [];
+    let imported = 0;
 
     try {
       // One file that isn't a valid EPUB doesn't stop the others.
       for (const file of Array.from(files)) {
         try {
+          // The id comes from the file as picked, before prepareEpub rewrites
+          // its stylesheets, and is checked before any of the slow work: the
+          // same book picked again (here or on another device) is recognized
+          // instead of being added twice.
+          const id = await bookIdFor(file);
+          const existing = await getBook(id);
+          if (existing) {
+            repeated.push(existing.title);
+            continue;
+          }
           const metadata = await parseEpubMetadata(file);
           const prepared = await prepareEpub(file);
           await addBook({
-            id: uuid(),
+            id,
             title: metadata.title,
             author: metadata.author,
             coverBlob: metadata.coverBlob,
@@ -329,6 +342,7 @@ export default function Library() {
             locations: prepared.locations,
             addedAt: Date.now(),
           });
+          imported++;
         } catch (error) {
           console.error(`Não foi possível importar ${file.name}`, error);
           failed.push(file.name);
@@ -339,6 +353,14 @@ export default function Library() {
       // removed) still fires `change` — the browser skips it for an unchanged value.
       input.value = "";
       setImporting(false);
+      if (imported > 0) void requestPersistentStorage();
+      if (repeated.length > 0) {
+        toast(
+          repeated.length === 1
+            ? `"${repeated[0]}" já está na biblioteca`
+            : `${repeated.length} livros já estavam na biblioteca`,
+        );
+      }
       if (failed.length > 0) {
         toast.error(
           failed.length === 1

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { Navigate, useNavigate, useParams } from 'react-router-dom'
 import ePub, {
   EpubCFI,
   type Book as EpubBook,
@@ -731,6 +731,10 @@ export default function Reader() {
   // Set by open(), which owns the locations Book the percentage comes from.
   const persistCurrentLocationRef = useRef<() => void>(() => {})
   const [loading, setLoading] = useState(true)
+  // A link to a book that isn't here (removed, or opened under an id from
+  // before the ids came from the content) goes back to the library instead of
+  // leaving the reader on a spinner.
+  const [missing, setMissing] = useState(false)
   const [toc, setToc] = useState<NavItem[]>([])
   const [activeTocId, setActiveTocId] = useState<string>()
   const [percentage, setPercentage] = useState<number>()
@@ -838,7 +842,11 @@ export default function Reader() {
 
     async function open() {
       const record = await getBook(bookId!)
-      if (!record || cancelled) return
+      if (cancelled) return
+      if (!record) {
+        setMissing(true)
+        return
+      }
       setBookTitle(record.title)
       fontScaleRef.current = record.fontScale ?? 1
 
@@ -1577,6 +1585,8 @@ export default function Reader() {
     'flex h-14 cursor-pointer flex-col items-center justify-center gap-0.5 rounded-lg text-xs text-foreground transition-[opacity,visibility] duration-200 disabled:cursor-not-allowed disabled:opacity-50',
     barsHidden && 'invisible opacity-0'
   )
+
+  if (missing) return <Navigate to="/" replace />
 
   return (
     // h-dvh, not h-screen: 100vh on iOS measures the viewport as if the

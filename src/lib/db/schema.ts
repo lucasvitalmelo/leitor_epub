@@ -1,6 +1,9 @@
 import Dexie, { type EntityTable } from 'dexie'
 
 export interface Book {
+  // The SHA-256 of the book's content (see bookIdFor): the same on every
+  // device that holds the book. Books from before that carry a random uuid
+  // until migrateBookIds gives them one.
   id: string
   title: string
   author: string
@@ -13,6 +16,17 @@ export interface Book {
   // book.locations.save() for the stored file. Not indexed, so adding these
   // needed no new database version.
   locations?: string
+  // Sync bookkeeping, also not indexed. Set by an import or by migrateBookIds;
+  // absent on a book only until then.
+  // Last change to the title, author, cover or file.
+  updatedAt?: number
+  // When the EPUB's bytes last changed: the import, or an edit (which rewrites them).
+  fileUpdatedAt?: number
+  // Which version of the file this device holds; behind fileUpdatedAt when
+  // another device edited the book since.
+  blobUpdatedAt?: number
+  // The file and the cover haven't gone up to Drive yet.
+  pendingUpload?: boolean
 }
 
 export interface Progress {
@@ -32,8 +46,16 @@ export interface Highlight {
   // The reader's own note on the passage; absent when there is none. Not
   // indexed, so adding it needed no new database version.
   note?: string
-  // When the note was last written.
+  // When the highlight or its note last changed; starts at createdAt.
   updatedAt?: number
+}
+
+// A book or highlight removed while this device was connected to Drive, so the
+// other devices can tell "removed" from "never had it". key is
+// `book:<id>` or `highlight:<id>`.
+export interface Deletion {
+  key: string
+  deletedAt: number
 }
 
 export type ColumnLayout = 'auto' | 'single' | 'double'
@@ -61,6 +83,7 @@ export class LeitorEpubDB extends Dexie {
   themes!: EntityTable<Theme, 'id'>
   settings!: EntityTable<Setting, 'key'>
   highlights!: EntityTable<Highlight, 'id'>
+  deletions!: EntityTable<Deletion, 'key'>
 
   constructor() {
     super('leitor-epub')
@@ -74,6 +97,10 @@ export class LeitorEpubDB extends Dexie {
 
     this.version(2).stores({
       highlights: 'id, bookId, createdAt',
+    })
+
+    this.version(3).stores({
+      deletions: 'key',
     })
   }
 }

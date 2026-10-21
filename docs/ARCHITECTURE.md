@@ -9,12 +9,18 @@ Aplicação client-side (SPA), sem backend de dados — a única peça de servid
 ### `books`
 | campo | tipo | descrição |
 |---|---|---|
-| id | string (uuid) | identificador do livro |
+| id | string (SHA-256) | identificador do livro: o hash do conteúdo do EPUB (ver `bookIdFor`), igual em todo aparelho que tem o livro. Os livros anteriores à sincronização tinham um uuid, trocado na abertura do app (`migrateBookIds`) |
 | title | string | título extraído do metadata do EPUB |
 | author | string | autor extraído do metadata |
 | coverBlob | Blob | imagem de capa extraída do EPUB |
-| fileBlob | Blob | arquivo `.epub` original |
+| fileBlob | Blob | arquivo `.epub` guardado (com as folhas de estilo saneadas na importação) |
 | addedAt | number (timestamp) | data de adição à biblioteca |
+| fontScale | number | fator que leva o texto do livro ao tamanho do tema; medido na importação |
+| locations | string | `book.locations.save()` do arquivo guardado |
+| updatedAt | number (timestamp) | última mudança de título, autor, capa ou arquivo |
+| fileUpdatedAt | number (timestamp) | quando os bytes do EPUB mudaram pela última vez |
+| blobUpdatedAt | number (timestamp) | qual versão do arquivo este aparelho tem |
+| pendingUpload | boolean | arquivo e capa ainda não subiram para o Drive |
 
 ### `progress`
 | campo | tipo | descrição |
@@ -23,6 +29,26 @@ Aplicação client-side (SPA), sem backend de dados — a única peça de servid
 | cfi | string | Canonical Fragment Identifier (posição exata via epub.js) |
 | percentage | number | progresso aproximado (0–100) |
 | lastReadAt | number (timestamp) | última leitura |
+
+### `highlights`
+| campo | tipo | descrição |
+|---|---|---|
+| id | string (uuid) | identificador do grifo |
+| bookId | string | referência a `books.id` |
+| cfiRange | string | posição do trecho (CFI) |
+| text | string | o texto grifado |
+| color | string | cor do grifo |
+| createdAt | number (timestamp) | criação |
+| note | string | anotação do grifo, quando há |
+| updatedAt | number (timestamp) | última mudança do grifo ou da nota; começa na criação |
+
+### `deletions`
+| campo | tipo | descrição |
+|---|---|---|
+| key | string | `book:<id>` ou `highlight:<id>` |
+| deletedAt | number (timestamp) | quando foi removido |
+
+Só é gravada com o Drive conectado neste aparelho (`settings.driveEnabled`), para a sincronização distinguir "removido" de "nunca teve". A exclusão de um livro vale também para os grifos dele.
 
 ### `themes`
 | campo | tipo | descrição |
@@ -40,8 +66,10 @@ Aplicação client-side (SPA), sem backend de dados — a única peça de servid
 ### `settings`
 | campo | tipo | descrição |
 |---|---|---|
-| key | string | chave da preferência (ex: `activeThemeId`) |
+| key | string | chave da preferência (ex: `activeTheme`) |
 | value | any | valor da preferência |
+
+Chaves em uso: `activeTheme`, `keepScreenOn` e `driveEnabled` (este aparelho já foi conectado ao Drive; liga o registro de exclusões).
 
 ## Estrutura de pastas (planejada)
 
@@ -51,7 +79,7 @@ src/
   components/       # componentes de UI reutilizáveis (shadcn + custom)
   pages/            # Library, Reader, Settings
   lib/
-    db/             # setup do Dexie + repositórios (books, progress, themes)
+    db/             # setup do Dexie + repositórios (books, progress, themes, highlights, deletions) e a migração dos IDs dos livros
     epub/           # wrappers/helpers em torno do epub.js
   store/            # stores Zustand (tema ativo, livro atual, etc.)
   routes/           # configuração de rotas
@@ -63,3 +91,4 @@ src/
 - **Dexie.js em vez de IndexedDB puro**: API mais ergonômica, com suporte a queries e migrations de schema.
 - **epub.js**: biblioteca madura para parsing/renderização de EPUB, expõe CFI (posição exata dentro do texto) o que resolve "salvar posição de leitura" com precisão.
 - **shadcn/ui**: componentes acessíveis e sem estilo opinativo forte, facilita aplicar a identidade visual customizada (tema "menininha": paletas pastel, cantos arredondados, tipografia suave).
+- **O ID do livro vem do conteúdo**: para o mesmo livro ser o mesmo em todo aparelho, e a sincronização levar o progresso e os grifos de um ao outro. Não é um uuid (cada aparelho daria o seu) nem o hash dos bytes do arquivo guardado (a importação reescreve as folhas de estilo e o `repack` data o `mimetype` com a hora de agora, então esses bytes mudam). É o SHA-256 da lista de arquivos do EPUB (caminho, CRC-32 e tamanho), lida do diretório central do zip, sem as folhas de estilo e o `mimetype`; descompactar tudo para hashear o conteúdo custava ~60 ms por arquivo no WebKit.
