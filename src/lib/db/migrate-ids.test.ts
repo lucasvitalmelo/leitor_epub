@@ -54,8 +54,8 @@ describe('migrateBookIds', () => {
       blobUpdatedAt: 100,
       pendingUpload: true,
     })
-    expect(await bytes(book.fileBlob)).toEqual(await bytes(file))
-    expect(book.fileBlob.type).toBe('application/epub+zip')
+    expect(await bytes(book.fileBlob!)).toEqual(await bytes(file))
+    expect(book.fileBlob!.type).toBe('application/epub+zip')
     expect(await book.coverBlob?.text()).toBe('capa')
     expect(await db.progress.get(id)).toMatchObject({ cfi: 'epubcfi(/6/2)', percentage: 40, lastReadAt: 900 })
     expect(await db.progress.get(OLD_A)).toBeUndefined()

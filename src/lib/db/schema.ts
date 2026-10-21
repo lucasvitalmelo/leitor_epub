@@ -8,7 +8,8 @@ export interface Book {
   title: string
   author: string
   coverBlob: Blob | null
-  fileBlob: Blob
+  // null: the book is only on Drive ("na nuvem"); it's downloaded when opened.
+  fileBlob: Blob | null
   addedAt: number
   // Multiplies the theme's font size so the book's main text lands on it;
   // measured on import (see prepareEpub). Absent on books imported before.
@@ -27,6 +28,15 @@ export interface Book {
   blobUpdatedAt?: number
   // The file and the cover haven't gone up to Drive yet.
   pendingUpload?: boolean
+  // Where the EPUB and the cover are on Drive, once uploaded (by any device).
+  driveFileId?: string
+  driveCoverId?: string
+}
+
+export type BookWithFile = Book & { fileBlob: Blob }
+
+export function hasFile(book: Book): book is BookWithFile {
+  return book.fileBlob !== null
 }
 
 export interface Progress {

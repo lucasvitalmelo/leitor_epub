@@ -51,6 +51,9 @@ export async function migrateBookIds(onProgress?: (progress: MigrationProgress) 
 async function migrateOne(oldId: string): Promise<'moved' | 'merged' | 'gone'> {
   const book = await db.books.get(oldId)
   if (!book) return 'gone'
+  // Books without their file came from another device, already with an id
+  // from the content; an old one always has its file.
+  if (!book.fileBlob) throw new Error('Livro sem o arquivo neste aparelho')
 
   // Everything slow happens before the transaction, which closes by itself if
   // it waits on anything but IndexedDB. The bytes go into new Blobs, so the new

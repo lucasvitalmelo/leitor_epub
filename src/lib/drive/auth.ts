@@ -40,6 +40,12 @@ export async function getAccessToken(): Promise<string> {
   throw new DriveAuthError('indisponivel')
 }
 
+// A 401 from the Drive API means the cached token stopped working before its
+// time (revoked, or a clock that's off): the next call asks the server again.
+export function invalidateAccessToken(): void {
+  cached = null
+}
+
 // A page navigation, not a popup: popups are what tends to break in the app
 // installed on the iPhone.
 export function connectDrive(): void {

@@ -13,7 +13,7 @@ Aplicação client-side (SPA), sem backend de dados — a única peça de servid
 | title | string | título extraído do metadata do EPUB |
 | author | string | autor extraído do metadata |
 | coverBlob | Blob | imagem de capa extraída do EPUB |
-| fileBlob | Blob | arquivo `.epub` guardado (com as folhas de estilo saneadas na importação) |
+| fileBlob | Blob \| null | arquivo `.epub` guardado (com as folhas de estilo saneadas na importação); `null` no livro que está só no Drive, baixado quando é aberto |
 | addedAt | number (timestamp) | data de adição à biblioteca |
 | fontScale | number | fator que leva o texto do livro ao tamanho do tema; medido na importação |
 | locations | string | `book.locations.save()` do arquivo guardado |
@@ -21,6 +21,8 @@ Aplicação client-side (SPA), sem backend de dados — a única peça de servid
 | fileUpdatedAt | number (timestamp) | quando os bytes do EPUB mudaram pela última vez |
 | blobUpdatedAt | number (timestamp) | qual versão do arquivo este aparelho tem |
 | pendingUpload | boolean | arquivo e capa ainda não subiram para o Drive |
+| driveFileId | string | onde está o EPUB no Drive, depois de enviado (por qualquer aparelho) |
+| driveCoverId | string | onde está a capa no Drive |
 
 ### `progress`
 | campo | tipo | descrição |
@@ -69,7 +71,21 @@ Só é gravada com o Drive conectado neste aparelho (`settings.driveEnabled`), p
 | key | string | chave da preferência (ex: `activeTheme`) |
 | value | any | valor da preferência |
 
-Chaves em uso: `activeTheme`, `keepScreenOn` e `driveEnabled` (este aparelho já foi conectado ao Drive; liga o registro de exclusões).
+Chaves em uso: `activeTheme`, `keepScreenOn`, `driveEnabled` (este aparelho foi conectado ao Drive e não desconectou; liga o registro de exclusões) e `driveFolders` (os IDs das pastas do app no Drive).
+
+## Sincronização com o Google Drive
+
+Opcional, com o Drive conectado (escopo `drive.file`: o app só enxerga o que ele mesmo criou). No Drive da pessoa:
+
+```
+MyBooks/
+  <Título> - <Autor>.epub        (appProperties.bookId = o ID do livro)
+  Dados do app/
+    biblioteca.json              (livros, progresso, grifos e exclusões)
+    capas/<ID>.jpg | .png | .webp
+```
+
+Uma sincronização (`syncNow`, em `src/lib/sync/run.ts`; uma por vez) acha ou cria as pastas; lê o `biblioteca.json`, junta com o banco daqui (`mergeLibrary`, uma função pura), grava aqui o que veio de fora e devolve o resultado ao Drive se ele mudou — conferindo antes a `version` do arquivo e recomeçando, até 3 vezes, se outro aparelho gravou no meio; envia os livros pendentes, um por vez; repete a junção, que põe no arquivo os livros que acabaram de subir; e baixa as capas que faltam. Um livro que o Drive recusa é pulado e fica pendente; um erro que interrompe os envios (o Drive cheio, por exemplo) não pula a segunda junção nem as capas, e só é relatado no fim. A biblioteca recarrega assim que o que veio de fora é gravado, sem esperar os envios. Roda ao abrir a biblioteca, depois de importar, editar ou remover, e no "Sincronizar agora". O livro que veio de outro aparelho fica com `fileBlob: null` até ser aberto (`ensureBookFile`). Com `?debug=1`, cada passo vai para o registro de diagnóstico.
 
 ## Estrutura de pastas (planejada)
 
@@ -81,6 +97,8 @@ src/
   lib/
     db/             # setup do Dexie + repositórios (books, progress, themes, highlights, deletions) e a migração dos IDs dos livros
     epub/           # wrappers/helpers em torno do epub.js
+    drive/          # login e a API do Google Drive
+    sync/           # sincronização com o Drive: biblioteca.json, junção, envio e download
   store/            # stores Zustand (tema ativo, livro atual, etc.)
   routes/           # configuração de rotas
 ```

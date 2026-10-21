@@ -17,6 +17,7 @@ import { v4 as uuid } from 'uuid'
 import { Button } from '@/components/ui/button'
 import { Toaster } from '@/components/ui/sonner'
 import { getBook, updateBook } from '@/lib/db/books'
+import { ensureBookFile, needsDownload } from '@/lib/sync/book-file'
 import { LOCATION_CHARS } from '@/lib/epub/prepare'
 import { addHighlight, listHighlights, removeHighlight, setHighlightNote } from '@/lib/db/highlights'
 import { getProgress, saveProgress } from '@/lib/db/progress'
@@ -735,6 +736,8 @@ export default function Reader() {
   // before the ids came from the content) goes back to the library instead of
   // leaving the reader on a spinner.
   const [missing, setMissing] = useState(false)
+  // A book that's only on Drive is downloaded on this loading screen.
+  const [fileState, setFileState] = useState<'pronto' | 'baixando' | 'falhou'>('pronto')
   const [toc, setToc] = useState<NavItem[]>([])
   const [activeTocId, setActiveTocId] = useState<string>()
   const [percentage, setPercentage] = useState<number>()
@@ -850,7 +853,19 @@ export default function Reader() {
       setBookTitle(record.title)
       fontScaleRef.current = record.fontScale ?? 1
 
-      const arrayBuffer = await record.fileBlob.arrayBuffer()
+      let file: Blob
+      try {
+        if (needsDownload(record)) setFileState('baixando')
+        file = await ensureBookFile(record)
+      } catch (error) {
+        debugLog('leitor: livro sem arquivo', String(error))
+        if (!cancelled) setFileState('falhou')
+        return
+      }
+      if (cancelled) return
+      setFileState('pronto')
+
+      const arrayBuffer = await file.arrayBuffer()
       // From here to renditionRef being set is synchronous. Without this
       // check, closing the reader during the await left a rendition the
       // cleanup never saw — still able to save a position computed against a
@@ -1719,7 +1734,21 @@ export default function Reader() {
             className="absolute inset-0 z-10 flex items-center justify-center text-muted-foreground"
             style={{ background: activeTheme.background }}
           >
-            Carregando livro...
+            {fileState === 'falhou' ? (
+              <div className="flex max-w-sm flex-col items-center gap-4 px-6 text-center">
+                <p>
+                  Não foi possível baixar este livro do seu Google Drive. Confira a conexão e tente de
+                  novo.
+                </p>
+                <Button variant="outline" onClick={() => navigate('/')}>
+                  Voltar para a biblioteca
+                </Button>
+              </div>
+            ) : fileState === 'baixando' ? (
+              'Baixando o livro...'
+            ) : (
+              'Carregando livro...'
+            )}
           </div>
         )}
         <button

@@ -7,7 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Download, EllipsisVertical, Lock, Pencil, Plus, Trash2 } from "lucide-react";
+import { Cloud, Download, EllipsisVertical, Lock, Pencil, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -35,11 +35,13 @@ import { bookIdFor } from "@/lib/epub/book-id";
 import { exportBook } from "@/lib/epub/export";
 import { parseEpubMetadata } from "@/lib/epub/parse";
 import { prepareEpub } from "@/lib/epub/prepare";
-import type { Book, Progress, Theme } from "@/lib/db/schema";
+import { hasFile, type Book, type BookWithFile, type Progress, type Theme } from "@/lib/db/schema";
 import { requestPersistentStorage } from "@/lib/storage";
+import { needsDownload } from "@/lib/sync/book-file";
 import { themeTint } from "@/lib/theme-colors";
 import { cn } from "@/lib/utils";
 import { useDriveStore } from "@/store/drive-store";
+import { useSyncStore } from "@/store/sync-store";
 import { useThemeStore } from "@/store/theme-store";
 import ProgressBar from "@/components/ProgressBar";
 import { Toaster } from "@/components/ui/sonner";
@@ -198,7 +200,7 @@ export default function Library() {
   const [importing, setImporting] = useState(false);
   const [bookToRemove, setBookToRemove] = useState<Book | null>(null);
   // A new session per opening remounts the dialog (see EditBookDialog).
-  const [editing, setEditing] = useState<{ book: Book; session: number } | null>(null);
+  const [editing, setEditing] = useState<{ book: BookWithFile; session: number } | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
@@ -241,13 +243,20 @@ export default function Library() {
     "--ring": themeTint(activeTheme, 65),
   } as CSSProperties;
 
+  // Read again whenever a sync brought something from another device.
+  const syncRevision = useSyncStore((s) => s.revision);
   useEffect(() => {
     listBooks().then(setBooks);
     listProgress().then(setProgress);
-  }, []);
+  }, [syncRevision]);
 
+  // Every visit to the library syncs: opening the app, and coming back from a
+  // book, whose new position then goes up.
   useEffect(() => {
-    void useDriveStore.getState().check();
+    void useDriveStore
+      .getState()
+      .check()
+      .then(() => useSyncStore.getState().run());
   }, []);
 
   // Google's login comes back here as ?drive=<result> (server/auth/routes.ts).
@@ -378,6 +387,7 @@ export default function Library() {
         );
       }
       setBooks(await listBooks());
+      if (imported > 0) void useSyncStore.getState().run();
     }
   }
 
@@ -385,13 +395,14 @@ export default function Library() {
     await removeBook(id);
     setBooks(await listBooks());
     setProgress(await listProgress());
+    void useSyncStore.getState().run();
   }
 
   const openBook = (id: string) => navigate(`/read/${id}`);
 
   const cover = (book: Book, className: string) => (
     <div
-      className={cn("overflow-hidden rounded-lg border bg-muted", className)}
+      className={cn("relative overflow-hidden rounded-lg border bg-muted", className)}
     >
       {book.coverBlob ? (
         <CoverImage
@@ -402,6 +413,14 @@ export default function Library() {
         <div className="flex h-full items-center justify-center p-2 text-center text-sm text-muted-foreground">
           {book.title}
         </div>
+      )}
+      {!hasFile(book) && (
+        <span
+          title="Na nuvem: o livro é baixado quando você abre"
+          className="absolute top-1.5 right-1.5 rounded-full bg-background/85 p-1 text-foreground shadow-sm"
+        >
+          <Cloud className="size-3.5" aria-label="Na nuvem" />
+        </span>
       )}
     </div>
   );
@@ -558,9 +577,16 @@ export default function Library() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" style={portalVars}>
+                          {/* Editing and exporting need the current file here:
+                              a book only on Drive, or one edited on another
+                              device since, is downloaded by opening it once.
+                              Editing the old copy would put its old title back
+                              over the other device's edit. */}
                           <DropdownMenuItem
                             className="cursor-pointer"
+                            disabled={!hasFile(book) || needsDownload(book)}
                             onSelect={() => {
+                              if (!hasFile(book) || needsDownload(book)) return;
                               setEditing({ book, session: Date.now() });
                               setEditOpen(true);
                             }}
@@ -570,7 +596,10 @@ export default function Library() {
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             className="cursor-pointer"
-                            onSelect={() => void exportBook(book)}
+                            disabled={!hasFile(book) || needsDownload(book)}
+                            onSelect={() => {
+                              if (hasFile(book) && !needsDownload(book)) void exportBook(book);
+                            }}
                           >
                             <Download />
                             Exportar
@@ -617,8 +646,9 @@ export default function Library() {
               Remover "{bookToRemove?.title}"?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              O arquivo e o progresso de leitura salvo serão removidos
-              permanentemente. Essa ação não pode ser desfeita.
+              {bookToRemove?.driveFileId
+                ? "O livro, o progresso e os grifos saem deste aparelho e dos outros conectados ao seu Google Drive. Essa ação não pode ser desfeita."
+                : "O arquivo e o progresso de leitura salvo serão removidos permanentemente. Essa ação não pode ser desfeita."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -638,7 +668,10 @@ export default function Library() {
           book={editing.book}
           open={editOpen}
           onClose={() => setEditOpen(false)}
-          onSaved={async () => setBooks(await listBooks())}
+          onSaved={async () => {
+            setBooks(await listBooks());
+            void useSyncStore.getState().run();
+          }}
           style={portalVars}
         />
       )}

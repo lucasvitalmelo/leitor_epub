@@ -43,11 +43,37 @@ describe('o estado do Drive neste aparelho', () => {
     await vi.waitFor(async () => expect(await enabled()).toBe(true))
   })
 
-  it('nunca ter conectado aqui desliga o registro', async () => {
+  it('perder o login (o servidor diz desconectado) não desliga o registro', async () => {
     await flag.setDriveEnabled(true)
     serverAnswers(json(401, { error: 'desconectado' }))
     await store.useDriveStore.getState().check()
-    await vi.waitFor(async () => expect(await enabled()).toBe(false))
+    expect(store.useDriveStore.getState().status).toBe('desconectado')
+    expect(await enabled()).toBe(true)
+  })
+
+  it('um check que responde depois do desconectar não religa nada', async () => {
+    await flag.setDriveEnabled(true)
+    let answerToken!: (response: Response) => void
+    const fetchMock = vi.fn<typeof fetch>()
+    fetchMock.mockImplementationOnce(() => new Promise<Response>((resolve) => (answerToken = resolve)))
+    fetchMock.mockResolvedValueOnce(json(200, { ok: true }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const checking = store.useDriveStore.getState().check()
+    await store.useDriveStore.getState().disconnect()
+    answerToken(token())
+    await checking
+    // Lets any write the late check could have fired land first.
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    expect(store.useDriveStore.getState().status).toBe('desconectado')
+    expect(await enabled()).toBe(false)
+
+    // The next visit to the library checks again: the late token wasn't kept.
+    fetchMock.mockResolvedValueOnce(json(401, { error: 'desconectado' }))
+    await store.useDriveStore.getState().check()
+    expect(store.useDriveStore.getState().status).toBe('desconectado')
+    expect(await enabled()).toBe(false)
   })
 
   it('o acesso que expirou não desliga o registro', async () => {
