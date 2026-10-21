@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { db, type Book } from '@/lib/db/schema'
 import type { DriveApi } from '@/lib/drive/api'
-import { BookNotHereError, ensureBookFile, needsDownload } from './book-file'
+import { BookNotHereError, downloadBookBlob, ensureBookFile, needsDownload } from './book-file'
 
 // The real one, wrapped, so a test can make keeping the file fail.
 const { saveDownloadedFile } = vi.hoisted(() => ({ saveDownloadedFile: vi.fn() }))
@@ -73,5 +73,18 @@ describe('ensureBookFile', () => {
     await expect(ensureBookFile(makeBook(), driveWith(async () => Promise.reject(new TypeError('offline'))))).rejects.toThrow(
       BookNotHereError,
     )
+  })
+})
+
+describe('downloadBookBlob', () => {
+  it('devolve o arquivo do Drive e lança erro quando não consegue baixar', async () => {
+    const drive = driveWith(async () => new Blob(['do drive']))
+    expect(await (await downloadBookBlob(makeBook(), drive)).text()).toBe('do drive')
+
+    const offline = driveWith(async () => {
+      throw new TypeError('Failed to fetch')
+    })
+    await expect(downloadBookBlob(makeBook(), offline)).rejects.toThrow('Failed to fetch')
+    await expect(downloadBookBlob(makeBook({ driveFileId: undefined }), drive)).rejects.toBeInstanceOf(BookNotHereError)
   })
 })

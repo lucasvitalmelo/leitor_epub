@@ -7,6 +7,7 @@ import {
   markBookUploaded,
   readLocalLibrary,
   saveDownloadedCover,
+  type AppliedChanges,
   type DriveFolders,
 } from '@/lib/db/sync'
 import type { BookWithFile } from '@/lib/db/schema'
@@ -27,16 +28,30 @@ const COVER_DOWNLOADS = 4
 export interface SyncSummary {
   // Records this device took from the others (books, progress, highlights).
   applied: number
+  // Of those, the books that arrived from another device and the ones removed there.
+  booksAdded: number
+  booksRemoved: number
   uploaded: number
   // Books Drive refused (see uploadPendingBooks); they stay pending.
   skipped: number
   covers: number
 }
 
+// The books going up in this sync; a refused one counts as done.
+export interface UploadProgress {
+  done: number
+  total: number
+}
+
 export type SyncProblem = 'offline' | 'conta' | 'cheio' | 'pasta' | 'formato' | 'conflito' | 'erro'
 
 export class SyncError extends Error {
   readonly problem: SyncProblem
+
+  // The books that arrived from another device or were removed there before
+  // the sync failed: they're in the library already and still get announced.
+  booksAdded = 0
+  booksRemoved = 0
 
   constructor(problem: SyncProblem, message: string) {
     super(message)
@@ -48,17 +63,39 @@ let running: Promise<SyncSummary> | null = null
 
 // One sync at a time: a call while one is running gets that same run.
 // onApplied fires once the records from the other devices are in, before this
-// device's own uploads, which on a first sync can take minutes.
-export function syncNow(api: DriveApi = driveApi, onApplied?: () => void): Promise<SyncSummary> {
-  running ??= runSync(api, onApplied).finally(() => {
+// device's own uploads, which on a first sync can take minutes; onProgress
+// follows those uploads, book by book.
+export function syncNow(
+  api: DriveApi = driveApi,
+  onApplied?: () => void,
+  onProgress?: (progress: UploadProgress) => void,
+): Promise<SyncSummary> {
+  running ??= runSync(api, onApplied, onProgress).finally(() => {
     running = null
   })
   return running
 }
 
-async function runSync(api: DriveApi, onApplied?: () => void): Promise<SyncSummary> {
+const nothingApplied = (): AppliedChanges => ({ booksAdded: 0, booksRemoved: 0, other: 0 })
+const total = (changes: AppliedChanges) => changes.booksAdded + changes.booksRemoved + changes.other
+
+// Adds b into a, in place.
+function addTo(a: AppliedChanges, b: AppliedChanges): void {
+  a.booksAdded += b.booksAdded
+  a.booksRemoved += b.booksRemoved
+  a.other += b.other
+}
+
+async function runSync(
+  api: DriveApi,
+  onApplied?: () => void,
+  onProgress?: (progress: UploadProgress) => void,
+): Promise<SyncSummary> {
   const started = Date.now()
   debugLog('sync: início')
+  // Filled in as the records from the other side are applied, so a sync that
+  // fails afterwards (writing the file back, an upload) still reports them.
+  const received = nothingApplied()
   try {
     // A device's first sync adds both sides up (spec: "primeira conexão"). The
     // removals it recorded before were local ones — the dialog said so — and
@@ -68,22 +105,25 @@ async function runSync(api: DriveApi, onApplied?: () => void): Promise<SyncSumma
       debugLog('sync: primeira deste aparelho', `${dropped} exclusão(ões) de antes descartada(s)`)
     }
     const folders = await ensureFolders(api)
-    let applied = await syncLibraryFile(api, folders)
-    if (applied > 0) onApplied?.()
-    const { uploaded, skipped, stoppedBy } = await uploadPendingBooks(api, folders)
+    await syncLibraryFile(api, folders, received)
+    if (total(received) > 0) onApplied?.()
+    const { uploaded, skipped, stoppedBy } = await uploadPendingBooks(api, folders, onProgress)
     // A book is only in the file once its EPUB is on Drive. The books that went
     // up just now get in with this second round, which is what makes them
     // appear on the other devices; it runs even when the uploads stopped early.
-    if (uploaded > 0) applied += await syncLibraryFile(api, folders)
+    if (uploaded > 0) await syncLibraryFile(api, folders, received)
     const covers = await downloadMissingCovers(api)
     if (stoppedBy) throw stoppedBy
+    const applied = total(received)
     debugLog(
       'sync: fim',
       `${applied} recebida(s), ${uploaded} enviado(s), ${skipped} recusado(s), ${covers} capa(s), ${Date.now() - started} ms`,
     )
-    return { applied, uploaded, skipped, covers }
+    return { applied, booksAdded: received.booksAdded, booksRemoved: received.booksRemoved, uploaded, skipped, covers }
   } catch (error) {
     const problem = toSyncError(error)
+    problem.booksAdded = received.booksAdded
+    problem.booksRemoved = received.booksRemoved
     debugLog('sync: erro', `${problem.problem}: ${String(error)}`)
     throw problem
   }
@@ -92,8 +132,8 @@ async function runSync(api: DriveApi, onApplied?: () => void): Promise<SyncSumma
 // Steps 3 to 6 of the spec: read the shared file, merge, apply here, and write
 // the result back if it differs, unless another device wrote it in between
 // (then the whole round starts over).
-async function syncLibraryFile(api: DriveApi, folders: DriveFolders): Promise<number> {
-  let applied = 0
+// What it applies here is added into applied as it happens.
+async function syncLibraryFile(api: DriveApi, folders: DriveFolders, applied: AppliedChanges): Promise<void> {
   for (let attempt = 1; attempt <= WRITE_ATTEMPTS; attempt++) {
     const ref = await api.findFile(LIBRARY_FILE, folders.data)
     // The version as the file itself reports it: a search can lag behind a
@@ -102,11 +142,11 @@ async function syncLibraryFile(api: DriveApi, folders: DriveFolders): Promise<nu
     const theirs = ref ? parseLibraryFile(await api.downloadText(ref.id)) : null
     if (ref && !theirs) debugLog('sync: biblioteca ilegível, será regravada')
     const { file, changes } = mergeLibrary(await readLocalLibrary(), theirs)
-    applied += await applyRemoteChanges(changes)
+    addTo(applied, await applyRemoteChanges(changes))
     const text = serializeLibraryFile(file)
     if (theirs && text === serializeLibraryFile(theirs)) {
       debugLog('sync: biblioteca em dia', `${Object.keys(file.books).length} livro(s)`)
-      return applied
+      return
     }
     if (ref && (await api.getVersion(ref.id)) !== version) {
       debugLog('sync: biblioteca mudou no meio', `tentativa ${attempt}`)
@@ -116,7 +156,7 @@ async function syncLibraryFile(api: DriveApi, folders: DriveFolders): Promise<nu
     if (ref) await api.updateFile(ref.id, content)
     else await api.createFile({ name: LIBRARY_FILE, parentId: folders.data, mimeType: 'application/json' }, content)
     debugLog('sync: biblioteca gravada', `${Object.keys(file.books).length} livro(s)`)
-    return applied
+    return
   }
   throw new SyncError('conflito', 'Outro aparelho estava sincronizando ao mesmo tempo. Tente de novo.')
 }
@@ -147,10 +187,13 @@ function refused(error: unknown): boolean {
 async function uploadPendingBooks(
   api: DriveApi,
   folders: DriveFolders,
+  onProgress?: (progress: UploadProgress) => void,
 ): Promise<{ uploaded: number; skipped: number; stoppedBy: unknown }> {
   let uploaded = 0
   let skipped = 0
-  for (const book of await listBooksToUpload()) {
+  const pending = await listBooksToUpload()
+  if (pending.length > 0) onProgress?.({ done: 0, total: pending.length })
+  for (const [index, book] of pending.entries()) {
     const expected = { updatedAt: book.updatedAt ?? book.addedAt, fileUpdatedAt: book.fileUpdatedAt ?? book.addedAt }
     try {
       let fileId = book.driveFileId ?? null
@@ -197,6 +240,7 @@ async function uploadPendingBooks(
       skipped++
       debugLog('sync: livro não enviado', `${book.title}: ${String(error)}`)
     }
+    onProgress?.({ done: index + 1, total: pending.length })
   }
   return { uploaded, skipped, stoppedBy: null }
 }
