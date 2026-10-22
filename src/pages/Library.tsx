@@ -333,8 +333,12 @@ export default function Library() {
   // book is here anyway.
   const someInCloud = books.some((book) => !hasFile(book));
   const shelf = effectiveShelf(savedShelf, books.some(hasFile), importItems.length > 0);
-  const visibleBooks: Book[] =
-    someInCloud && shelf === "baixados" ? sortedBooks.filter(hasFile) : sortedBooks;
+  const showingAvailable = someInCloud && shelf === "disponiveis";
+  const visibleBooks: Book[] = !someInCloud
+    ? sortedBooks
+    : sortedBooks.filter((book) => hasFile(book) !== showingAvailable);
+  // A book being imported is already on this device.
+  const visibleImports = showingAvailable ? [] : importItems;
 
   function chooseShelf(next: Shelf) {
     setSavedShelf(next);
@@ -477,7 +481,8 @@ export default function Library() {
             >
               Todos os livros
             </h2>
-            {/* "Baixados" is what can be read without a connection. */}
+            {/* "Baixados" is what can be read without a connection;
+                "Disponíveis", what's on Drive still to download. */}
             {someInCloud && (
               <div
                 role="group"
@@ -487,7 +492,7 @@ export default function Library() {
                 {(
                   [
                     ["baixados", "Baixados"],
-                    ["todos", "Todos"],
+                    ["disponiveis", "Disponíveis"],
                   ] as const
                 ).map(([value, text]) => (
                   <button
@@ -510,13 +515,15 @@ export default function Library() {
                 ))}
               </div>
             )}
-            {visibleBooks.length === 0 && importItems.length === 0 && (
+            {visibleBooks.length === 0 && visibleImports.length === 0 && (
               <p className="mb-4 text-sm text-muted-foreground">
-                Nenhum livro baixado neste aparelho.
+                {showingAvailable
+                  ? "Todos os livros do Google Drive já estão neste aparelho."
+                  : "Nenhum livro baixado neste aparelho."}
               </p>
             )}
             <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 sm:gap-x-6 md:grid-cols-4 lg:grid-cols-5">
-              {importItems.map((item) => (
+              {visibleImports.map((item) => (
                 <PendingBookCard
                   key={item.key}
                   item={item}
@@ -542,14 +549,16 @@ export default function Library() {
                   onRemoveLocal={() => void handleRemoveLocal(book)}
                 />
               ))}
-              <button
-                type="button"
-                onClick={pickFiles}
-                className="flex aspect-2/3 w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed text-sm text-muted-foreground transition-colors hover:bg-muted"
-              >
-                <Plus className="size-5" />
-                Adicionar
-              </button>
+              {!showingAvailable && (
+                <button
+                  type="button"
+                  onClick={pickFiles}
+                  className="flex aspect-2/3 w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed text-sm text-muted-foreground transition-colors hover:bg-muted"
+                >
+                  <Plus className="size-5" />
+                  Adicionar
+                </button>
+              )}
             </div>
           </section>
         )}

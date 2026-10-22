@@ -3,7 +3,7 @@ import { effectiveShelf, parseShelf } from './shelf'
 
 describe('effectiveShelf', () => {
   it('a escolha salva vence sempre', () => {
-    expect(effectiveShelf('todos', true, false)).toBe('todos')
+    expect(effectiveShelf('disponiveis', true, false)).toBe('disponiveis')
     expect(effectiveShelf('baixados', false, false)).toBe('baixados')
   })
 
@@ -11,8 +11,8 @@ describe('effectiveShelf', () => {
     expect(effectiveShelf(null, true, false)).toBe('baixados')
   })
 
-  it('sem escolha e nada baixado, abre em Todos para não mostrar a grade vazia', () => {
-    expect(effectiveShelf(null, false, false)).toBe('todos')
+  it('sem escolha e nada baixado, abre em Disponíveis para não mostrar a grade vazia', () => {
+    expect(effectiveShelf(null, false, false)).toBe('disponiveis')
   })
 
   it('uma importação em andamento conta como livro baixado', () => {
@@ -22,10 +22,10 @@ describe('effectiveShelf', () => {
 
 describe('parseShelf', () => {
   it('lê os valores salvos, inclusive o antigo "aparelho"', () => {
-    expect(parseShelf('todos')).toBe('todos')
+    expect(parseShelf('disponiveis')).toBe('disponiveis')
     expect(parseShelf('baixados')).toBe('baixados')
     expect(parseShelf('aparelho')).toBe('baixados')
+    expect(parseShelf('todos')).toBeNull()
     expect(parseShelf(null)).toBeNull()
-    expect(parseShelf('outra')).toBeNull()
   })
 })

@@ -386,6 +386,7 @@ Registro de alterações relevantes do projeto: o que mudou e por quê. Ver regr
 - **Abas "Baixados | Todos"** (`src/lib/shelf.ts`, `src/pages/Library.tsx`): "Baixados" vem primeiro e é o padrão. No celular o seletor ocupa a largura toda.
   - _Por quê_: o filtro mais útil, o do que dá para ler sem internet, era o segundo. E "No aparelho" dizia menos que "Baixados".
   - _Decisão — sem escolha na sessão e sem nenhum livro baixado, abre em "Todos"_: senão um aparelho recém-conectado abriria numa grade vazia. O valor antigo `aparelho` salvo na sessão é lido como `baixados`.
+  - _Ajuste no mesmo dia — "Todos" virou "Disponíveis"_: mostra só os livros que estão no Drive e ainda não foram baixados, e as duas abas deixam de se sobrepor. Pedido do usuário, para a grade ficar mais limpa. Um livro baixado pelo ⤓ passa para "Baixados", e uma importação em andamento (e o card "Adicionar") aparece só em "Baixados". A regra da grade vazia passa a abrir em "Disponíveis".
 - **Links do livro com cor legível e tratados pelo app** (`src/lib/theme-colors.ts`, `src/lib/reader/links.ts`, `src/pages/Reader.tsx`):
   - Os links usam um azul que acompanha o tema: escuro nas paletas claras e claro no Escuro.
   - Links de texto são sublinhados. Números de nota e links em imagem não.
