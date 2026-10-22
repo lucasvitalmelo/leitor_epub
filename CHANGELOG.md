@@ -380,3 +380,54 @@ Registro de alterações relevantes do projeto: o que mudou e por quê. Ver regr
     - O cabeçalho a 375 px.
 
     Ficam para o celular, com o Drive de verdade: o envio real, o download pelo ⤓, "Remover deste aparelho" e os avisos.
+
+## 2026-10-22
+
+- **Abas "Baixados | Todos"** (`src/lib/shelf.ts`, `src/pages/Library.tsx`): "Baixados" vem primeiro e é o padrão. No celular o seletor ocupa a largura toda.
+  - _Por quê_: o filtro mais útil, o do que dá para ler sem internet, era o segundo. E "No aparelho" dizia menos que "Baixados".
+  - _Decisão — sem escolha na sessão e sem nenhum livro baixado, abre em "Todos"_: senão um aparelho recém-conectado abriria numa grade vazia. O valor antigo `aparelho` salvo na sessão é lido como `baixados`.
+- **Links do livro com cor legível e tratados pelo app** (`src/lib/theme-colors.ts`, `src/lib/reader/links.ts`, `src/pages/Reader.tsx`):
+  - Os links usam um azul que acompanha o tema: escuro nas paletas claras e claro no Escuro.
+  - Links de texto são sublinhados. Números de nota e links em imagem não.
+  - Links externos agora abrem numa aba nova.
+  - _Por quê_: no tema Escuro os links ficavam azul-escuros, com contraste de 1,84:1. O saneamento tira o `color` do CSS do livro, e sobrava a cor padrão do navegador.
+  - _Decisão — `linkColor` calculado em TypeScript_: um azul (OKLCH, matiz 255) com contraste de até 7:1 contra o fundo, nunca abaixo de 4,5:1. Se nem o piso couber, fica a cor do texto. Em TS, não `color-mix()` no iframe, para o contraste ficar garantido. O sublinhado é obrigatório, porque nas paletas claras nenhuma cor sozinha se distingue do texto.
+  - _Decisão — `<style>` própria em cada seção, não `rendition.themes.default()`_: pelo `themes.default()`, um seletor que o navegador não entende (`:has()`) lança no `insertRule` e interrompe o resto do tema. Como `textContent`, só aquela regra cai.
+  - _Decisão — o app trata o clique, não o epub.js_: o `onclick` do epub.js fazia um `display()` sem o reposicionamento (`settleAt`) e não rodava no WebKit, porque o iframe sandbox não roda scripts. No toque, a superfície de gestos entrega o link ao app, o que vale também no iPhone. Os links externos não abriam: o sandbox não tem `allow-popups`. Agora abrem pelo documento do app.
+- **Ponto de retorno depois de um salto** (`src/lib/reader/checkpoint.ts`, `src/components/reader/ReturnButton.tsx`, `src/components/ProgressBar.tsx`, `src/pages/Reader.tsx`):
+  - Seguir um link, um item do sumário, um resultado de busca, uma anotação ou Home/End mostra "↩ Voltar · 12%" com um ✕: no centro da barra de baixo no celular, no cabeçalho no computador.
+  - Uma marca ▾ na barra de progresso mostra de onde você saiu.
+  - O Voltar do Android e o Alt+← levam de volta.
+  - _Por quê_: seguir uma nota de rodapé levava à página certa, mas não havia como voltar para onde se estava lendo.
+  - _Decisão — um ponto só_: a página de antes do primeiro salto. Saltos seguintes (um link dentro da nota) não a trocam. Ele some ao voltar, ao chegar na origem por outro caminho (virando páginas ou pelo ↩ da nota), no ✕ ou ao fechar o livro. Virar página não tira o botão, porque uma nota pode ter várias páginas.
+  - _Decisão — enquanto o botão existe, a posição gravada é a origem_: fechar o app numa nota reabre onde se lia, aqui e nos outros aparelhos. A âncora de reposicionamento continua sendo a tela, então girar o aparelho na nota não puxa de volta. O ✕ grava a posição atual na hora.
+  - _Decisão — `jumpSettled`_: um salto para a mesma página é descartado só depois de assentar. Um `relocated` da página de origem (reajuste de fontes) pode chegar antes do salto.
+  - _Decisão — uma entrada no histórico (guard)_: é o que o Voltar do sistema consome. Voltar, ✕ e chegar na origem a tiram com `navigate(-1)`. Uma que sobre (reload sobre ela) é descartada da mesma forma, não substituída, para não deixar uma entrada repetida do leitor.
+  - _Correção_: a seta ← do cabeçalho fazia `navigate('/')`, que empilhava uma entrada. Com isso, o Voltar do Android na biblioteca reabria o livro. Agora ela volta no histórico, pulando o guard, ou substitui por `/` quando o leitor é a primeira entrada.
+- **Navegação no computador** (`src/lib/reader/wheel-paging.ts`, `src/components/reader/ShortcutsDialog.tsx`, `src/components/reader/ReaderSettings.tsx`, `src/pages/Reader.tsx`, `src/index.css`):
+  - A roda do mouse e o trackpad viram página.
+  - ↑ e ↓ também viram página.
+  - Home e End levam ao início e ao fim do capítulo.
+  - A tecla `?` (e um item no painel de ajustes, só com mouse) mostra os atalhos.
+  - _Por quê_: no computador só os botões laterais e o teclado viravam página, e ninguém sabia dos atalhos.
+  - _Decisão — uma página por gesto_: um gesto novo começa depois de 200 ms parado, ao inverter a direção ou com uma nova aceleração no meio da inércia do trackpad. A cauda da inércia não vira mais páginas. Uma virada pedida enquanto outra ainda carrega é descartada, porque a fila do epub.js empilharia páginas. O detector é um só para o leitor, não um por seção: a troca de capítulo cria um iframe novo no meio do gesto.
+  - _Decisão — `overscroll-behavior-x: none` e `preventDefault`_: evitam que deslizar dois dedos para o lado vire o "voltar" do Chrome no Mac.
+- **Livro de teste com links** (`scripts/generate-test-epub.mjs`, `scripts/validate-epub.mjs`, `fixtures/livro-de-teste.epub`):
+  - O capítulo 1 tem uma referência cruzada, uma nota EPUB 3, uma nota antiga (`sup > a`), um link em imagem e um link externo.
+  - Há um capítulo de notas com uma nota longa e links ↩ de volta, além de um CSS que tenta pintar os links.
+  - O validador confere também os links internos dos capítulos.
+  - _Por quê_: o fixture não tinha nenhum link, e a cor e o ponto de retorno precisavam de uma base de teste.
+- _Verificação_: 257 testes (42 novos), lint e build passando, e o fixture regerado com os mesmos bytes nas duas gerações. No Chromium, com o fixture:
+  - A cor nos links, com sublinhado só nos de texto.
+  - A nota 1 vai para as notas com o botão e a marca. A roda vira a página dentro da nota e o botão fica. O ↩ volta e limpa o ponto.
+  - O Voltar do navegador, o ✕ e o End funcionam.
+  - Fechar o livro com o ponto ativo reabre na origem. A seta ← volta à biblioteca sem empilhar entradas.
+  - O botão na barra de baixo a 375 px.
+
+  Ficam para os aparelhos do usuário:
+  - O Voltar do Android e o toque nas notas no celular.
+  - O link externo no Chrome Android.
+  - Mouse e trackpad reais, para calibrar os limiares da roda.
+- _Limites conhecidos_:
+  - No Safari do Mac, a roda e o clique em link sobre o texto podem não chegar ao app, porque o livro não roda scripts no WebKit. Funcionam as margens, os botões e o teclado fora do livro. Não verificado no WebKit.
+  - Mouses de roda livre viram uma página por rajada.

@@ -28,6 +28,7 @@ import SyncButton from "@/components/library/SyncButton";
 import SyncStrip from "@/components/library/SyncStrip";
 import { listBooks, removeBook, removeLocalFile } from "@/lib/db/books";
 import { listProgress } from "@/lib/db/progress";
+import { effectiveShelf, parseShelf, type Shelf } from "@/lib/shelf";
 import { hasFile, type Book, type BookWithFile, type Progress, type Theme } from "@/lib/db/schema";
 import { themeTint } from "@/lib/theme-colors";
 import { cn } from "@/lib/utils";
@@ -187,17 +188,15 @@ function showDriveResult(result: string) {
   else toast.error("Não foi possível conectar ao Google Drive", options);
 }
 
-// Which books the grid shows while some are only on Drive. Kept for the
-// session, so coming back from the reader (which navigates to "/") doesn't
-// reset it.
-type Shelf = "todos" | "aparelho";
+// Kept for the session, so coming back from the reader (which navigates to
+// "/") doesn't reset it.
 const SHELF_KEY = "mybooks:estante";
 
-function readShelf(): Shelf {
+function readShelf(): Shelf | null {
   try {
-    return sessionStorage.getItem(SHELF_KEY) === "aparelho" ? "aparelho" : "todos";
+    return parseShelf(sessionStorage.getItem(SHELF_KEY));
   } catch {
-    return "todos";
+    return null;
   }
 }
 
@@ -208,7 +207,7 @@ export default function Library() {
   // A new session per opening remounts the dialog (see EditBookDialog).
   const [editing, setEditing] = useState<{ book: BookWithFile; session: number } | null>(null);
   const [editOpen, setEditOpen] = useState(false);
-  const [shelf, setShelf] = useState<Shelf>(readShelf);
+  const [savedShelf, setSavedShelf] = useState<Shelf | null>(readShelf);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -333,11 +332,12 @@ export default function Library() {
   // The tabs only show while some book is only on Drive; without them, every
   // book is here anyway.
   const someInCloud = books.some((book) => !hasFile(book));
+  const shelf = effectiveShelf(savedShelf, books.some(hasFile), importItems.length > 0);
   const visibleBooks: Book[] =
-    someInCloud && shelf === "aparelho" ? sortedBooks.filter(hasFile) : sortedBooks;
+    someInCloud && shelf === "baixados" ? sortedBooks.filter(hasFile) : sortedBooks;
 
   function chooseShelf(next: Shelf) {
-    setShelf(next);
+    setSavedShelf(next);
     try {
       sessionStorage.setItem(SHELF_KEY, next);
     } catch {
@@ -477,17 +477,17 @@ export default function Library() {
             >
               Todos os livros
             </h2>
-            {/* "No aparelho" is what can be read without a connection. */}
+            {/* "Baixados" is what can be read without a connection. */}
             {someInCloud && (
               <div
                 role="group"
                 aria-label="Quais livros mostrar"
-                className="mb-4 flex w-full max-w-xs gap-1 rounded-lg bg-muted p-1 text-sm"
+                className="mb-4 flex w-full gap-1 rounded-lg bg-muted p-1 text-sm sm:max-w-xs"
               >
                 {(
                   [
+                    ["baixados", "Baixados"],
                     ["todos", "Todos"],
-                    ["aparelho", "No aparelho"],
                   ] as const
                 ).map(([value, text]) => (
                   <button
