@@ -148,22 +148,22 @@ function AboutSection() {
       className="mx-auto mt-10 max-w-xl space-y-3 text-center text-sm text-muted-foreground"
     >
       <h2 id="sobre" className="text-base font-medium text-foreground">
-        Sobre o MyBooks
+        Sobre o E-books
       </h2>
       <p>
-        O MyBooks é um leitor de EPUB pessoal: importe seus livros, leia com as
+        O E-books é um leitor de EPUB pessoal: importe seus livros, leia com as
         cores, a fonte e o espaçamento que preferir, grife trechos e escreva
         anotações. Seus livros, seu progresso e seus grifos ficam guardados no
         seu navegador.
       </p>
       <p>
-        Se quiser, conecte sua conta Google: o MyBooks usa o Google Drive, só
+        Se quiser, conecte sua conta Google: o E-books usa o Google Drive, só
         com acesso aos arquivos que ele mesmo cria, para guardar seus livros,
         progresso e grifos e levar a leitura de um aparelho para o outro.
       </p>
       <p lang="en">
-        MyBooks is a personal EPUB reader. Optionally, you can connect your
-        Google account: MyBooks then uses Google Drive, restricted to the files
+        E-books is a personal EPUB reader. Optionally, you can connect your
+        Google account: E-books then uses Google Drive, restricted to the files
         it creates itself, to keep your books, reading progress and highlights
         and carry your reading from one device to another.
       </p>
@@ -384,7 +384,7 @@ export default function Library() {
             className="size-8 shrink-0 rounded-lg"
           />
           <h1 className="flex items-center gap-1 min-w-0 flex-1 truncate text-xl font-semibold sm:text-2xl">
-            MyBooks
+            E-books
             {books.length > 0 && (
               <span className="min-w-0 truncate text-sm font-normal text-muted-foreground sm:text-base">
                 · {books.length} {books.length === 1 ? "livro" : "livros"}
@@ -614,7 +614,7 @@ export default function Library() {
           navegador; o Google Drive é opcional.
         </p>
         <p className="mt-1">
-          MyBooks · <PrivacyLink>Política de privacidade</PrivacyLink>
+          E-books · <PrivacyLink>Política de privacidade</PrivacyLink>
         </p>
       </footer>
       <Toaster />

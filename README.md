@@ -1,4 +1,4 @@
-# Leitor EPUB
+# E-books
 
 Leitor de EPUB pessoal, feito para rodar no navegador: você sobe seus próprios arquivos `.epub`, o app lembra onde você parou em cada livro e permite customizar a aparência da leitura (cores, tipografia, espaçamento) do seu jeito.
 
@@ -44,6 +44,53 @@ No iPhone, o app da Tela de Início guarda os dados separado do navegador: livro
 npm install
 npm run dev
 ```
+
+O `npm run dev` sobe só o app (Vite, em `http://localhost:5173`), sem o login do Google: o botão do Drive fica escondido e tudo o mais funciona. Para testar o Drive, gere o build e suba o servidor, que serve o app e as rotas `/api/auth/*`:
+
+```bash
+npm run build
+npm start
+```
+
+O servidor abre em `http://localhost:3000` e lê as variáveis de `.env.local`.
+
+## Variáveis de ambiente
+
+Só o servidor (`server/`) usa variáveis, e todas são do login do Google Drive. Copie o modelo e preencha:
+
+```bash
+cp .env.example .env.local
+```
+
+| Variável | O que é |
+| --- | --- |
+| `GOOGLE_CLIENT_ID` | Client ID do OAuth (tipo "Aplicativo da Web") |
+| `GOOGLE_CLIENT_SECRET` | O segredo desse Client ID. Fica só no servidor |
+| `COOKIE_SECRET` | 32 bytes aleatórios em base64, que cifram o cookie do login. Gere com `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"` |
+| `OAUTH_ALLOWED_ORIGINS` | Origens de onde o app é aberto, exatas, sem barra no fim e separadas por vírgula (ex.: `http://localhost:3000,https://seu-dominio.com`) |
+| `PORT` | Opcional, a porta do servidor (padrão `3000`) |
+
+Se faltar qualquer uma das quatro primeiras, o servidor avisa no log ("Login do Google Drive desligado") e continua servindo o app, só sem o Drive.
+
+**Configurar no Google Cloud:**
+
+1. Crie um projeto no [Google Cloud Console](https://console.cloud.google.com/) e ative a **Google Drive API**.
+2. Configure a **tela de consentimento OAuth**:
+   - nome do app "E-books";
+   - o link da política de privacidade (`<origem>/privacy`);
+   - o escopo `.../auth/drive.file`, que dá acesso só aos arquivos que o próprio app cria.
+
+   Enquanto o app estiver em modo de teste, só os e-mails cadastrados como usuários de teste conseguem entrar.
+3. Em **Credenciais**, crie um **ID do cliente OAuth** do tipo "Aplicativo da Web":
+   - em "Origens JavaScript autorizadas", ponha cada origem de `OAUTH_ALLOWED_ORIGINS`;
+   - em "URIs de redirecionamento autorizados", ponha `<origem>/api/auth/callback` para cada uma (ex.: `http://localhost:3000/api/auth/callback`).
+4. Copie o Client ID e o segredo para o `.env.local`.
+
+**Em produção** (Coolify ou qualquer host Node):
+- o comando de build é `npm run build` e o de start é `npm start`;
+- cadastre as mesmas variáveis como variáveis de execução do app, com a origem de produção (em HTTPS) em `OAUTH_ALLOWED_ORIGINS` e no Client ID.
+
+Num host só estático, como o Vercel, não há servidor, e o app roda sem o Drive.
 
 ## Roadmap
 

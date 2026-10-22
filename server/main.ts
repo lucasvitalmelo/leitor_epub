@@ -71,5 +71,5 @@ createServer((req, res) => {
     res.destroy()
   }
 }).listen(port, () => {
-  console.log(`Leitor EPUB em http://localhost:${port}`)
+  console.log(`E-books em http://localhost:${port}`)
 })
