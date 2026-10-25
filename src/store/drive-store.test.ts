@@ -107,3 +107,26 @@ describe('o estado do Drive neste aparelho', () => {
     expect(await enabled()).toBe(true)
   })
 })
+
+describe('enabled', () => {
+  it('desconectar de propósito desliga; perder o login mantém', async () => {
+    serverAnswers(token(), about())
+    await store.useDriveStore.getState().check()
+    expect(store.useDriveStore.getState().enabled).toBe(true)
+
+    serverAnswers(json(401, { error: 'desconectado' }))
+    store.useDriveStore.setState({ status: 'conectado' })
+    await store.useDriveStore.getState().check()
+    expect(store.useDriveStore.getState().enabled).toBe(true)
+
+    serverAnswers(json(200, {}))
+    await store.useDriveStore.getState().disconnect()
+    expect(store.useDriveStore.getState().enabled).toBe(false)
+  })
+
+  it('loadEnabled lê o que ficou gravado', async () => {
+    await flag.setDriveEnabled(true)
+    await store.useDriveStore.getState().loadEnabled()
+    expect(store.useDriveStore.getState().enabled).toBe(true)
+  })
+})

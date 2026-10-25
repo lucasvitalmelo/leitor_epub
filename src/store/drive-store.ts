@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { connectDrive, disconnectDrive, DriveAuthError, getAccessToken, invalidateAccessToken } from '@/lib/drive/auth'
 import { getDriveAccount, type DriveAccount } from '@/lib/drive/account'
-import { setDriveEnabled } from '@/lib/db/deletions'
+import { isDriveEnabled, setDriveEnabled } from '@/lib/db/deletions'
 import { requestPersistentStorage } from '@/lib/storage'
 import { debugLog } from '@/lib/debug-log'
 
@@ -13,6 +13,10 @@ export type DriveStatus = 'verificando' | 'indisponivel' | 'desconectado' | 'con
 interface DriveState {
   status: DriveStatus
   account: DriveAccount | null
+  // This device's choice: off only after an explicit disconnect (see remember).
+  // Losing the login keeps it on, so the books only on Drive stay in the library.
+  enabled: boolean
+  loadEnabled: () => Promise<void>
   check: () => Promise<void>
   connect: () => void
   disconnect: () => Promise<void>
@@ -24,6 +28,7 @@ interface DriveState {
 // the cookie after a `reconectar`), and removals made in that gap still have to
 // reach the other devices. Fire and forget: a failed write must not break the screen.
 function remember(enabled: boolean): void {
+  useDriveStore.setState({ enabled })
   setDriveEnabled(enabled).catch((error) => debugLog('drive: estado não guardado', String(error)))
 }
 
@@ -34,6 +39,10 @@ let generation = 0
 export const useDriveStore = create<DriveState>((set) => ({
   status: 'verificando',
   account: null,
+  enabled: false,
+  loadEnabled: async () => {
+    set({ enabled: await isDriveEnabled() })
+  },
   check: async () => {
     const started = generation
     try {

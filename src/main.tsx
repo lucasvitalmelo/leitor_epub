@@ -6,6 +6,8 @@ import './index.css'
 import { router } from '@/routes'
 import { useThemeStore } from '@/store/theme-store'
 import { useReadingPrefsStore } from '@/store/reading-prefs-store'
+import { useDriveStore } from '@/store/drive-store'
+import WarmthOverlay from '@/components/WarmthOverlay'
 import { initDebug } from '@/lib/debug-log'
 import { migrateLibraryAtBoot } from '@/lib/boot-migration'
 
@@ -26,6 +28,9 @@ await migrateLibraryAtBoot(document.getElementById('root')!)
 await Promise.all([
   useThemeStore.getState().loadActiveTheme(),
   useReadingPrefsStore.getState().loadReadingPrefs(),
+  // Before the library's first render, which hides the books only on Drive
+  // when this device disconnected from it.
+  useDriveStore.getState().loadEnabled(),
 ])
 
 // Keeps the system bars on the active theme's background instead of white.
@@ -44,6 +49,7 @@ useThemeStore.subscribe((state) => syncSystemBars(state.activeTheme.background))
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <RouterProvider router={router} />
+    <WarmthOverlay />
   </StrictMode>,
 )
 

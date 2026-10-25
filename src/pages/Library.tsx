@@ -1,13 +1,6 @@
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-  type ReactNode,
-} from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
-import { Lock, Plus } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Lock, Plus, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -23,12 +16,14 @@ import BookCard from "@/components/library/BookCard";
 import BookCover from "@/components/library/BookCover";
 import DriveButton from "@/components/library/DriveButton";
 import EditBookDialog from "@/components/library/EditBookDialog";
+import { EmptyLibraryNotes, EmptyShelf } from "@/components/library/EmptyLibrary";
 import PendingBookCard from "@/components/library/PendingBookCard";
 import SyncButton from "@/components/library/SyncButton";
 import SyncStrip from "@/components/library/SyncStrip";
 import { listBooks, removeBook, removeLocalFile } from "@/lib/db/books";
 import { listProgress } from "@/lib/db/progress";
-import { effectiveShelf, parseShelf, type Shelf } from "@/lib/shelf";
+import { effectiveShelf, libraryBooks, parseShelf, type Shelf } from "@/lib/shelf";
+import { pageThemeVars, portalThemeVars } from "@/lib/page-theme";
 import { hasFile, type Book, type BookWithFile, type Progress, type Theme } from "@/lib/db/schema";
 import { themeTint } from "@/lib/theme-colors";
 import { cn } from "@/lib/utils";
@@ -201,7 +196,7 @@ function readShelf(): Shelf | null {
 }
 
 export default function Library() {
-  const [books, setBooks] = useState<Book[]>([]);
+  const [allBooks, setBooks] = useState<Book[]>([]);
   const [progress, setProgress] = useState<Progress[]>([]);
   const [bookToRemove, setBookToRemove] = useState<Book | null>(null);
   // A new session per opening remounts the dialog (see EditBookDialog).
@@ -214,40 +209,8 @@ export default function Library() {
   const driveResult = searchParams.get("drive");
   const activeTheme = useThemeStore((s) => s.activeTheme);
 
-  // Same reasoning as Reader.tsx: text-foreground/text-muted-foreground/
-  // hover:bg-muted read CSS variables, so overriding them here makes the
-  // library follow the same theme as the reader instead of always showing
-  // the app's default light look. --primary/--primary-foreground cover the
-  // "Adicionar EPUB" button — there's no separate accent color in Theme yet,
-  // so it uses the theme's colors inverted (text color as fill, background
-  // as its label) instead of the app's default black/white button. --border:
-  // the app's fixed light gray read as a bright line on dark palettes.
-  const themeVars = {
-    background: activeTheme.background,
-    color: activeTheme.textColor,
-    "--foreground": activeTheme.textColor,
-    "--muted-foreground": activeTheme.textColor,
-    "--muted": `${activeTheme.textColor}1a`,
-    "--primary": activeTheme.textColor,
-    "--primary-foreground": activeTheme.background,
-    "--border": themeTint(activeTheme, 15),
-    // The book menu and the import notifications (Toaster, rendered in place).
-    "--popover": themeTint(activeTheme, 5),
-    "--popover-foreground": activeTheme.textColor,
-  } as CSSProperties;
-  // The book menu and the dialogs render through portals, outside the themed
-  // subtree, so they get the palette again. --input and --ring: the edit
-  // fields' border and focus ring, the app's fixed light grays otherwise — a
-  // bright outline on a dark palette.
-  const portalVars = {
-    ...themeVars,
-    background: undefined,
-    "--background": activeTheme.background,
-    "--accent": `${activeTheme.textColor}1a`,
-    "--accent-foreground": activeTheme.textColor,
-    "--input": themeTint(activeTheme, 20),
-    "--ring": themeTint(activeTheme, 65),
-  } as CSSProperties;
+  const themeVars = pageThemeVars(activeTheme);
+  const portalVars = portalThemeVars(activeTheme);
 
   // Read again whenever a sync brought something from another device, and
   // whenever an import or a download finished (either may end while the
@@ -260,7 +223,10 @@ export default function Library() {
   const downloading = useDownloadStore((s) => s.downloading);
   const downloadRevision = useDownloadStore((s) => s.revision);
   const download = useDownloadStore((s) => s.download);
-  const driveConnected = useDriveStore((s) => s.status === "conectado");
+  const driveStatus = useDriveStore((s) => s.status);
+  const driveConnected = driveStatus === "conectado";
+  const driveEnabled = useDriveStore((s) => s.enabled);
+  const books = useMemo(() => libraryBooks(allBooks, driveEnabled), [allBooks, driveEnabled]);
   useEffect(() => {
     listBooks().then(setBooks);
     listProgress().then(setProgress);
@@ -373,9 +339,10 @@ export default function Library() {
   }
 
   const openBook = (id: string) => navigate(`/read/${id}`);
+  const empty = books.length === 0 && importItems.length === 0;
 
   return (
-    <div className="flex min-h-screen flex-col" style={themeVars}>
+    <div className="relative flex min-h-screen flex-col" style={themeVars}>
       <div className="mx-auto w-full max-w-5xl flex-1 px-4 py-6 sm:px-6 sm:py-10">
         <header className="mb-6 flex items-center gap-2 sm:mb-8 sm:gap-3">
           <img
@@ -391,16 +358,20 @@ export default function Library() {
               </span>
             )}
           </h1>
-          <SyncButton />
-          <DriveButton portalStyle={portalVars} />
-          <Button
-            onClick={pickFiles}
-            aria-label="Adicionar EPUB"
-            className="max-sm:size-11 max-sm:px-0"
-          >
-            <Plus />
-            <span className="max-sm:hidden">Adicionar EPUB</span>
-          </Button>
+          <div className="flex shrink-0 items-center gap-1">
+            <SyncButton />
+            <DriveButton portalStyle={portalVars} />
+            <Button
+              variant="ghost"
+              size="icon-lg"
+              asChild
+              className="max-sm:size-11"
+            >
+              <Link to="/configuracoes" aria-label="Configurações" title="Configurações">
+                <Settings className="size-5" />
+              </Link>
+            </Button>
+          </div>
           <input
             ref={fileInputRef}
             type="file"
@@ -456,20 +427,11 @@ export default function Library() {
           </div>
         )}
 
-        {books.length === 0 && importItems.length === 0 ? (
-          <button
-            type="button"
-            onClick={pickFiles}
-            className="mx-auto mt-12 flex w-full max-w-sm cursor-pointer flex-col items-center gap-3 rounded-2xl border border-dashed px-6 py-12 text-center transition-colors hover:bg-muted"
-          >
-            <span className="flex size-12 items-center justify-center rounded-full bg-muted">
-              <Plus className="size-6" />
-            </span>
-            <span className="font-medium">Adicionar seu primeiro EPUB</span>
-            <span className="text-sm text-muted-foreground">
-              Escolha um ou mais arquivos .epub do seu aparelho.
-            </span>
-          </button>
+        {empty ? (
+          // The drawing takes the first screen; what the app is comes below it.
+          <div className="flex min-h-[calc(100svh-7rem)] flex-col pt-[200px] sm:pt-[180px]">
+            <EmptyShelf theme={activeTheme} />
+          </div>
         ) : (
           <section aria-labelledby="todos-os-livros">
             <h2
@@ -549,21 +511,26 @@ export default function Library() {
                   onRemoveLocal={() => void handleRemoveLocal(book)}
                 />
               ))}
-              {!showingAvailable && (
-                <button
-                  type="button"
-                  onClick={pickFiles}
-                  className="flex aspect-2/3 w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed text-sm text-muted-foreground transition-colors hover:bg-muted"
-                >
-                  <Plus className="size-5" />
-                  Adicionar
-                </button>
-              )}
             </div>
           </section>
         )}
-        {books.length === 0 && importItems.length === 0 && <AboutSection />}
+        {empty && <AboutSection />}
       </div>
+
+      {empty && (
+        <EmptyLibraryNotes
+          showDrive={driveStatus === "desconectado" || driveStatus === "conectado" || driveStatus === "reconectar"}
+        />
+      )}
+      <button
+        type="button"
+        onClick={pickFiles}
+        aria-label="Adicionar livro"
+        title="Adicionar livro"
+        className="fixed right-5 bottom-7 z-40 flex size-14 cursor-pointer items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-[0_4px_12px_rgba(0,0,0,0.18)] transition-opacity hover:opacity-90 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+      >
+        <Plus className="size-6" />
+      </button>
 
       <AlertDialog
         open={bookToRemove !== null}
@@ -607,7 +574,7 @@ export default function Library() {
         />
       )}
 
-      <footer className="border-t px-6 py-4 text-center text-xs text-muted-foreground">
+      <footer className="border-t px-6 pt-4 pb-24 text-center text-xs text-muted-foreground sm:pb-4">
         <p className="flex items-center justify-center gap-1.5">
           <Lock className="size-3.5 shrink-0" />
           Seus livros e seu progresso de leitura ficam guardados no seu

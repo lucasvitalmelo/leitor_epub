@@ -437,3 +437,22 @@ Registro de alterações relevantes do projeto: o que mudou e por quê. Ver regr
 - _Limites conhecidos_:
   - No Safari do Mac, a roda e o clique em link sobre o texto podem não chegar ao app, porque o livro não roda scripts no WebKit. Funcionam as margens, os botões e o teclado fora do livro. Não verificado no WebKit.
   - Mouses de roda livre viram uma página por rajada.
+
+## 2026-10-24
+
+- **Interface da v0.7 do app Android trazida para o web** (temperatura da luz, anel de abertura, sincronização durante a leitura, Configurações, botão flutuante e biblioteca vazia desenhada).
+  - _Por quê_: os dois clientes leem a mesma biblioteca do Drive e devem oferecer a mesma experiência. O formato do Drive não mudou.
+- **Temperatura da luz como uma camada com `mix-blend-mode: multiply`** (`src/lib/warmth.ts`, `WarmthOverlay`), por cima do app inteiro, iframe do livro incluído, de 0 a 100%.
+  - _Por quê_: multiplicar tira o azul sem clarear o preto; uma camada âmbar translúcida (o que o app tinha antes) deixava o tema escuro acinzentado.
+- **Brilho fica de fora no web.**
+  - _Por quê_: o navegador não muda o brilho da tela; sobraria só uma camada preta, e ela ficou de fora por decisão do projeto.
+- **Anel de progresso ao abrir um livro** por etapas reais (download do Drive, leitura do arquivo, abertura do EPUB, primeira página), só depois de 300 ms e com erro depois de 30 s sem avanço.
+  - _Por quê_: o download não informa quanto falta, então o anel só gira nessa etapa, e ela fica fora do prazo de 30 s: um livro grande numa rede lenta passaria disso sem ter travado. O web não tem a etapa "transfer" do app, que só existe por causa da ponte com a WebView.
+- **Sincronizar durante a leitura** (`src/lib/sync/reading-sync.ts`), ligada por padrão. A posição sobe 15 s depois da última gravação, no máximo a cada 3 min.
+  - _Por quê_: sem isso, a posição só subia ao voltar para a biblioteca, e quem fechava a aba no meio do livro não levava a leitura para o outro aparelho. A pausa e o intervalo evitam rodar uma sincronização inteira a cada página virada.
+- **Página de Configurações** (`/configuracoes`): Leitura, Google Drive (conta, última sincronização, sincronizar durante a leitura, sincronizar agora, desconectar), Biblioteca (espaço usado e liberar o dos livros que estão no Drive) e Sobre. A versão mostrada é o build id, porque o web não tem número de versão.
+  - _Por quê_: liberar espaço usa a mesma regra do "Remover deste aparelho" (`canFreeSpace`), então o arquivo daqui nunca é a única cópia.
+- **Biblioteca**: um botão flutuante substitui o "Adicionar EPUB" do cabeçalho e o card "Adicionar" da grade, e uma engrenagem abre as Configurações. A biblioteca vazia ganhou anotações em Caveat e setas apontando para o Drive, a engrenagem e o botão flutuante. As anotações do cabeçalho se prendem à borda direita dele e a do botão ao canto inferior direito da tela, para acompanhar qualquer largura.
+  - _Por quê_: o texto "Sobre o E-books" continua abaixo da primeira tela, porque a revisão do login do Google lê a página inicial.
+- **Com o Drive desconectado de propósito, os livros que só estão na nuvem saem da biblioteca** (`libraryBooks`). Os registros, o progresso e os grifos ficam e voltam ao conectar. Sem internet ou com o login a refazer, eles continuam.
+  - _Por quê_: o status `desconectado` do servidor também aparece quando só o cookie sumiu (depois de um `reconectar`), então o filtro usa o registro de que este aparelho desconectou (`driveEnabled`), e não esse status.
