@@ -24,6 +24,7 @@ import { useThemeStore } from "@/store/theme-store";
 import { useReadingPrefsStore } from "@/store/reading-prefs-store";
 import { DESKTOP_QUERY, useMediaQuery } from "@/hooks/use-media-query";
 import { isScreenWakeLockSupported } from "@/hooks/use-screen-wake-lock";
+import WarmthSlider from "@/components/WarmthSlider";
 import { PRESET_THEMES } from "@/lib/db/presets";
 import { FONT_OPTIONS } from "@/lib/db/fonts";
 import type { ColumnLayout } from "@/lib/db/schema";
@@ -283,6 +284,8 @@ export default function ReaderSettings({
               }
             />
           </div>
+
+          <WarmthSlider />
 
           {isScreenWakeLockSupported && (
             <div className="flex items-center justify-between gap-4">

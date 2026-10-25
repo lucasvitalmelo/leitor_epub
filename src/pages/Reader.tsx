@@ -48,6 +48,10 @@ import { linkColor, themeTint } from '@/lib/theme-colors'
 import { cn } from '@/lib/utils'
 import { useThemeStore } from '@/store/theme-store'
 import { useReadingPrefsStore } from '@/store/reading-prefs-store'
+import { useSyncStore } from '@/store/sync-store'
+import { delayForReadingSync } from '@/lib/sync/reading-sync'
+import { OPEN_RING_DELAY_MS, OPEN_STAGES, OPEN_TIMEOUT_MS, openProgress, type OpenStage } from '@/lib/reader/open-progress'
+import ProgressRing from '@/components/ProgressRing'
 import { useScreenWakeLock } from '@/hooks/use-screen-wake-lock'
 import { DESKTOP_QUERY, useMediaQuery } from '@/hooks/use-media-query'
 import { useElementWidth } from '@/hooks/use-element-width'
@@ -817,7 +821,34 @@ export default function Reader() {
   // leaving the reader on a spinner.
   const [missing, setMissing] = useState(false)
   // A book that's only on Drive is downloaded on this loading screen.
-  const [fileState, setFileState] = useState<'pronto' | 'baixando' | 'falhou'>('pronto')
+  // 'travou': the opening gave no sign for OPEN_TIMEOUT_MS.
+  const [fileState, setFileState] = useState<'pronto' | 'falhou' | 'travou'>('pronto')
+  // Where the opening is, for the ring on the loading screen.
+  const [opening, setOpening] = useState<{ stage: OpenStage; value: number }>({ stage: 'read', value: 0 })
+  // Never backwards: a late step of an earlier stage doesn't pull the ring back.
+  const advance = useCallback((stage: OpenStage, fraction = 0) => {
+    const value = openProgress(stage, fraction)
+    setOpening((current) => (current.value > value ? current : { stage, value }))
+  }, [])
+  // Each step is a new object and rearms the deadline. The download is left
+  // out: it gives no signs midway, and a big book on a slow network takes
+  // longer than this without having hung (its failure shows on its own).
+  useEffect(() => {
+    if (!loading || fileState !== 'pronto' || opening.stage === 'download') return
+    const watchdog = setTimeout(() => setFileState('travou'), OPEN_TIMEOUT_MS)
+    return () => clearTimeout(watchdog)
+  }, [loading, fileState, opening])
+
+  // One timer: each save rearms it for after the pause and the minimum gap
+  // since the last sync (see delayForReadingSync).
+  const syncTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const scheduleReadingSync = useCallback(() => {
+    if (!useReadingPrefsStore.getState().syncWhileReading) return
+    clearTimeout(syncTimerRef.current)
+    const delay = delayForReadingSync(Date.now(), useSyncStore.getState().lastSyncAt)
+    syncTimerRef.current = setTimeout(() => void useSyncStore.getState().run(), delay)
+  }, [])
+  useEffect(() => () => clearTimeout(syncTimerRef.current), [])
   const [toc, setToc] = useState<NavItem[]>([])
   const [activeTocId, setActiveTocId] = useState<string>()
   const [percentage, setPercentage] = useState<number>()
@@ -981,7 +1012,7 @@ export default function Reader() {
 
       let file: Blob
       try {
-        if (needsDownload(record)) setFileState('baixando')
+        if (needsDownload(record)) advance('download')
         file = await ensureBookFile(record)
       } catch (error) {
         debugLog('leitor: livro sem arquivo', String(error))
@@ -989,7 +1020,7 @@ export default function Reader() {
         return
       }
       if (cancelled) return
-      setFileState('pronto')
+      advance('read')
 
       const arrayBuffer = await file.arrayBuffer()
       // From here to renditionRef being set is synchronous. Without this
@@ -998,9 +1029,13 @@ export default function Reader() {
       // detached viewer.
       if (cancelled) return
       bookBufferRef.current = arrayBuffer
+      advance('parse')
       const book = ePub(arrayBuffer)
       bookRef.current = book
       setOpenBook(book)
+      void book.opened.then(() => {
+        if (!cancelled) advance('parse', 1)
+      })
 
       // Saved on import (prepareEpub): loading them is instant and touches no
       // Section, so the rendering Book can hold them. Books imported before
@@ -1165,6 +1200,9 @@ export default function Reader() {
         const seq = ++saveSeq
         saveProgress(saved)
           .catch(() => (seq === saveSeq ? saveProgress(saved) : undefined))
+          .then(() => {
+            if (!cancelled) scheduleReadingSync()
+          })
           .catch((error) => console.error('Não foi possível salvar o progresso de leitura', error))
       }
       persistRef.current = persist
@@ -1228,10 +1266,13 @@ export default function Reader() {
         }
       })
 
+      advance('render')
       settlingRef.current++
       try {
         await rendition.display(savedCfi)
+        if (!cancelled) advance('render', 0.5)
         await firstRelocation
+        if (!cancelled) advance('render', 0.8)
         if (savedCfi && !cancelled) await settleAt(rendition, savedCfi).catch(console.error)
       } finally {
         settlingRef.current--
@@ -2058,20 +2099,30 @@ export default function Reader() {
             className="absolute inset-0 z-10 flex items-center justify-center text-muted-foreground"
             style={{ background: activeTheme.background }}
           >
-            {fileState === 'falhou' ? (
+            {fileState !== 'pronto' ? (
               <div className="flex max-w-sm flex-col items-center gap-4 px-6 text-center">
                 <p>
-                  Não foi possível baixar este livro do seu Google Drive. Confira a conexão e tente de
-                  novo.
+                  {fileState === 'falhou'
+                    ? 'Não foi possível baixar este livro do seu Google Drive. Confira a conexão e tente de novo.'
+                    : 'Não foi possível abrir o livro.'}
                 </p>
                 <Button variant="outline" onClick={leaveReader}>
                   Voltar para a biblioteca
                 </Button>
               </div>
-            ) : fileState === 'baixando' ? (
-              'Baixando o livro...'
             ) : (
-              'Carregando livro...'
+              // Fades in only after OPEN_RING_DELAY_MS: a small book opens
+              // without flashing the ring.
+              <div
+                className="flex flex-col items-center gap-5 animate-in fade-in fill-mode-both"
+                style={{ animationDelay: `${OPEN_RING_DELAY_MS}ms`, color: activeTheme.textColor }}
+              >
+                <ProgressRing value={opening.value} indeterminate={opening.stage === 'download'} />
+                <div className="flex flex-col items-center gap-1 text-center">
+                  {bookTitle && <p className="text-[15px] font-medium">{bookTitle}</p>}
+                  <p className="text-sm text-muted-foreground">{OPEN_STAGES[opening.stage].label}</p>
+                </div>
+              </div>
             )}
           </div>
         )}

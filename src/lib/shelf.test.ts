@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { effectiveShelf, parseShelf } from './shelf'
+import { effectiveShelf, libraryBooks, parseShelf } from './shelf'
 
 describe('effectiveShelf', () => {
   it('a escolha salva vence sempre', () => {
@@ -27,5 +27,18 @@ describe('parseShelf', () => {
     expect(parseShelf('aparelho')).toBe('baixados')
     expect(parseShelf('todos')).toBeNull()
     expect(parseShelf(null)).toBeNull()
+  })
+})
+
+describe('libraryBooks', () => {
+  const here = { id: 'a', fileBlob: new Blob(['x']) }
+  const cloud = { id: 'b', fileBlob: null }
+
+  it('com o Drive ligado neste aparelho, mostra todos', () => {
+    expect(libraryBooks([here, cloud], true)).toEqual([here, cloud])
+  })
+
+  it('desconectado de propósito, esconde os que só estão na nuvem', () => {
+    expect(libraryBooks([here, cloud], false)).toEqual([here])
   })
 })
